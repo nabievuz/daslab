@@ -1,0 +1,31 @@
+.DS_Store
+node_modules/
+.env
+.env.local
+
+# Department trees are part of this repository — tracked, not ignored.
+
+# Project workspaces (each project manages its own git)
+/projects/
+
+# Agent runtime worktrees + workflow scratch (never tracked)
+/.claude/worktrees/
+/.worktrees/
+
+# Per-developer Claude Code settings (machine-specific — never tracked)
+**/settings.local.json
+
+# Python cache
+__pycache__/
+*.pyc
+dokploy-mcp.env
+/.claude/workflows/
+
+# Live wave KPI log (append-only, written by /daslab-cycle + /daslab-run)
+board/.wave-log
+
+# ArcRift store_memory durable outbox (append-only runtime state — ADR 0008, W7)
+board/.arcrift-outbox.jsonl
+
+# DGO-X event store (append-only runtime audit log — ADR 0011, Phase 1)
+board/.events.jsonl
