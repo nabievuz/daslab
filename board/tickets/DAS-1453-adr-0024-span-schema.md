@@ -1,8 +1,8 @@
 ---
 id: DAS-1453
 title: Author ADR-0024 span-event schema (OTel GenAI semantic-convention names)
-status: todo
-assignee: cto
+status: done
+assignee: chairman
 author: ceo
 dept: engineering
 priority: p1
@@ -143,3 +143,58 @@ Additional required decisions in the ADR:
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — CTO
+Authored `docs/adr/0024-span-event-schema.md` (Proposed, GATE-1 Planning) and added the
+index row + an Observability/tracing Themes note to `docs/adr/README.md`. The ADR decides:
+- A new append-only `span` event on the ADR 0011 event store (same envelope, pure builders,
+  caller-supplied `created_at`/`start`/`end`; never rewritten — a correction is a compensating span).
+- Span fields: `trace_id` = ticket id, `span_id`, `parent_span_id` (null ⇒ root), `kind` ∈
+  {invoke_agent, chat, execute_tool, wave, run}, agent name + model/tier (one field — dispatch
+  axis), `start`/`end` + derived `duration_ms`, input/output tokens, a `cached` flag +
+  `cached_input_tokens`, and `status` ∈ {ok, error}.
+- Field names ARE the OTel GenAI semantic-convention attribute names (`gen_ai.agent.name`,
+  `gen_ai.usage.input_tokens`/`output_tokens`/`cached_input_tokens`, `gen_ai.request.model`,
+  `kind`→`gen_ai.operation.name`) with one authoritative mapping table, so a real OTLPSpanExporter
+  is a field-mapping shim, not a schema migration. DasLab-only concepts namespaced `daslab.*`.
+- Reconciles `graph_state.trace_ids` (`state.py` `FIELD_GROUPS["artifacts"]`) as a DERIVED mirror
+  of POINTERS into the canonical span stream (ADR 0011 §1 canonical/derived split); stream wins.
+- Implementation deferred to DAS-1454 (register `span` in `_VALID_EVENT_TYPES`, build/validate).
+Validators: `python3 scripts/diagnostics.py` → 100/100; `python3 scripts/board_lint.py` → 0.
+Files: docs/adr/0024-span-event-schema.md (new), docs/adr/README.md (index row + theme).
+Set status → in_review; assignee → chairman for the GATE-1 Planning ADR review (next wave).
+Committed locally on `feat/das-1453-adr-0024-span-schema` (LOCAL-ONLY per ORGANISM build; no push/PR).
+
+### 2026-07-03 — Chairman of the Board
+GATE-1 (Planning) sign-off — **PASS / Accepted**. Reviewed `docs/adr/0024-span-event-schema.md`
+in full against the ticket's Acceptance criteria and the AADL GATE-1 Planning gate
+(`governance/policies/ai-agent-lifecycle.md` §3). Did not review my own work — the ADR was
+authored by CTO (author: ceo, per ROUTING this review lands on the Chairman for a governance/policy
+ADR sign-off).
+
+Verified (all 9 acceptance criteria met):
+- Standard ADR structure (Context / Decision / Consequences); next free number 0024; no prior ADR edited in place.
+- Span fields: `trace_id` = ticket id, `span_id`, `parent_span_id` (`null` ⇒ root) — trace tree correct (§1).
+- `kind` enum is exactly `{invoke_agent, chat, execute_tool, wave, run}` (§1, §2 mapping row).
+- Record carries agent name (`gen_ai.agent.name`) + model/tier (`gen_ai.request.model`, one dispatch axis),
+  `start`/`end` + derived `duration_ms`, in/out tokens, `cached` + `cached_input_tokens`, and `status` ∈ {ok, error} (§1).
+- OTel GenAI semantic-convention NAMES are the field names with one authoritative mapping table (§2); DasLab-only
+  concepts namespaced `daslab.*`; a real `OTLPSpanExporter` is a field-mapping shim, not a schema migration.
+- Append-only + caller-supplied `created_at`/`start`/`end` (never `utcnow()` in a pure builder), consistent with
+  `scripts/dgox/events.py` (§3).
+- Reconciles `graph_state.trace_ids` (`state.py` `FIELD_GROUPS["artifacts"]`) as a DERIVED mirror of pointers into
+  the canonical span stream; stream wins on divergence (ADR 0011 §1 canonical/derived split) (§4).
+- `docs/adr/README.md` has the 0024 index row + an Observability/tracing Themes note (ORGANISM WS3 BRIDGE);
+  all internal links resolve (0011, 0023, `../research/ORGANISM-PROGRAM-PLAN.md`).
+- Implementation correctly deferred to DAS-1454 (register `span` in `_VALID_EVENT_TYPES`, `build_span`/`validate_span`);
+  no code shipped here. Consistent posture with sibling ADR-0023 (extend-not-fork the ADR 0011 event store).
+
+GATE-1 items: for a **platform/org-engine ADR** (not a project agent-program), the applicable Planning-gate items —
+explicit scope boundaries and a rationale-with-law-check recorded in a merged decision record — are satisfied. The
+project-lifecycle GATE-1 items (finance-analyst token/infra budget, legal-analyst risk-ethics sign-off, business KPI,
+data feasibility) are N/A to a schema-decision ADR and apply when a shipping agent program enters its own Planning stage.
+
+ADR status `Proposed` → `Accepted` (and the matching README index-row status). Ticket → `done`.
+Note: local-only "done" here = green validators + completed review (no PR/merge, per the ORGANISM LOCAL-ONLY build directive).
+Validators re-run at review: `python3 scripts/diagnostics.py` → 100/100; `python3 scripts/board_lint.py` → 0 violations.
+Committing locally on `feat/das-1453-adr-0024-span-schema` (no push).
