@@ -1,8 +1,8 @@
 ---
 id: DAS-1455
 title: Dispatch emitter — the missing producer (run_start/run_end/span per dispatch)
-status: todo
-assignee: backend-em
+status: in_review
+assignee: cto
 author: ceo
 dept: engineering
 priority: p1
@@ -112,3 +112,19 @@ and be correct; the store stays in shadow mode until the wiring ticket flips the
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — Backend EM
+Built the missing DGO-X event PRODUCER — `scripts/dispatch_emitter.py` (NEW, standalone; `events.py`/`metrics_lib.py`/`wave_kpi.py` NOT modified).
+
+**Emitter API.** `DispatchRecord` (frozen dataclass — the per-dispatch/collect input the orchestrator already holds: ticket_id, run_id, goal, engine_version, model, role_key, start/end ISO-8601 Z, outcome, merged_pr, ci_status, t7_pass, t7_score, span_kind; optional span/token/timestamp overrides). Pure core:
+- `build_dispatch_events(record) -> [run_start, run_end, span]` — deterministic, no clock/network read; built via the DAS-1443/1454 typed builders `build_run_start`/`build_run_end`/`build_span` (never hand-rolled) and validated by `validate_run_start`/`validate_run_end`/`validate_span` before return.
+- `build_wave_events(records)` — flattens a wave in dispatch order.
+- `emit_dispatch(record, *, store|store_path)` / `emit_wave(records, ...)` — append-only via `EventStore.append` (never truncate/rewrite). Default store = live `board/.events.jsonl`; tests always pass a `tmp_path` store.
+
+`run_start`/`run_end` share `run_id` (pairing contract); `run_end` carries the EXACT `metrics_lib` field set (`RUN_END_METRICS_FIELDS`): outcome, model, merged_pr, ci_status, t7_pass, t7_score. **`dgox_emit` NOT flipped** — producer exists + is correct; store stays shadow until DAS-1452 wiring.
+
+**Metrics-go-live proof.** New `tests/test_dispatch_emitter.py` (15 tests): a synthetic 4-run overlapping wave (mixed haiku/sonnet/opus) makes all three previously-inert event-based gates compute a REAL number — `wave_kpi.busy_fraction_from_events` (T1) ≠ None, `metrics_lib.concurrency_stats` (T3) median > 1, `metrics_lib.model_mix` (T4) ratio 0.5 — and drives the actual `check_busy_fraction`/`check_concurrency`/`check_model_mix` `main(argv)` CLIs to exit 0 on that store. Ends the false-green "unmeasured" state. Also covers envelope validity, exact run_end fields, run_id pairing, span emission, append-only (byte-prefix invariant), determinism, iter_events replay.
+
+**Shadow-clean.** Added `"dispatch_emitter.py"` to `_EVENT_PRODUCERS` in `tests/test_dgox_phase1_shadow.py` (precedent: pulse_checkpoint.py) — it is a write-only PRODUCER, never reads events to route.
+
+**Verify (full suite):** pytest 960 passed / 1 skipped; diagnostics 100/100; board_lint 0; `ruff check scripts tests` clean. Committed local-only on `feat/das-1455-dispatch-emitter`. → `status: in_review`, assignee `cto` (never review own work). No push/PR (local-only per orchestrator).

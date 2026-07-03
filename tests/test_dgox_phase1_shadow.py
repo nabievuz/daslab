@@ -466,7 +466,7 @@ class TestShadowClean:
         # tracked follow-up, and ADR-0010 C3 / ADR-0011 Phase-1 shadow rule is being
         # superseded by ORGANISM (resume/emitter make events load-bearing) — that
         # supersession needs its own ADR.
-        _EVENT_PRODUCERS = {"pulse_checkpoint.py"}
+        _EVENT_PRODUCERS = {"pulse_checkpoint.py", "dispatch_emitter.py"}
         scripts_dir = _SCRIPTS
         py_files = [
             p
