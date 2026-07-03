@@ -1,8 +1,8 @@
 ---
 id: DAS-1448
 title: Merge-policies (append-only / owner-exclusive / aggregate) + reducers (P4)
-status: todo
-assignee: backend-em
+status: in_review
+assignee: cto
 author: ceo
 dept: engineering
 priority: p1
@@ -142,3 +142,67 @@ Per QONUN Project Placement Law + board_lint R9, the frontmatter carries **no**
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — Backend EM
+Built P4 (merge-policies + reducers). Local-only, branch `feat/das-1448-merge-policies`.
+
+**New module `scripts/merge_reducers.py`** (dependency-free, stdlib only):
+- Grammar authority (single source of truth): `KNOWN_AGGREGATORS={sum,union}`,
+  `parse_policy`, `is_valid_policy`, `MergeError`.
+- Three reducers over `(ticket_id, payload)` contributions:
+  - `append_only` — concat blocks in lexical ticket-id order; within-block order
+    preserved; input-order-independent.
+  - `owner_exclusive` — disjoint union of owned units (mapping or iterable);
+    RAISES `MergeError` on overlap; order-independent.
+  - `aggregate(reducer_name)` — `sum` (numeric) / `union` (set); RAISES on an
+    unknown reducer name.
+  - `merge(policy, contribs)` dispatch.
+
+**`scripts/board_lint.py` extended (EXTEND-in-place, regex parser untouched):**
+- Imports `is_valid_policy` from `merge_reducers` (no grammar duplication).
+- Tolerant readers `_zone_of` / `_merge_policy_of` (strip quotes/whitespace),
+  mirroring `check_dependency_graph._fm_field`.
+- **R10** (per-ticket grammar, additive): validates `merge_policy` when present —
+  allowed forms only; empty/unrecognized = violation; `merge_policy` without a
+  `zone:` anchor = violation. Tickets without the field lint exactly as before.
+- **Wave correctness guard (SAFETY, exported, fail-closed):**
+  `same_zone_pair_allowed(fm_a, fm_b)` and `zone_wave_conflicts(wave)`. These are
+  the schema-level decision helpers `/daslab-cycle` (and tests) call over a
+  *candidate wave*. **Default = FORBID:** a same-zone pair is rejected unless
+  BOTH tickets declare the SAME valid, permitting `merge_policy`. No policy /
+  mismatched / empty / invalid → forbidden. Deliberately NOT run over the whole
+  board in `main()` — the board legitimately holds many same-zone tickets across
+  different waves (e.g. four `daslab-cycle` tickets today), so a whole-board rule
+  would false-positive; this matches `check_dependency_graph`'s own note that the
+  same-zone/wave rule is a runtime property, not repo state.
+
+**`.claude/skills/daslab-cycle/SKILL.md`** step-3 guard prose: added an
+"Opt-in widening (default stays closed)" note pointing at the exported predicate;
+no volatile tokens in the stable prefix; bumped `CACHE_PREFIX_VERSION`
+v11-fanout-deferred → v12-merge-policies and re-fixed `scripts/.cache_prefix_baseline`
+(same protocol DAS-1449 used for its step-3 prose change).
+
+**`check_dependency_graph.py`** left unchanged (read-only reference; empty-`zone:`
+already covered; `merge_policy`-without-zone is covered by board_lint R10).
+
+**Tests:** `tests/test_merge_reducers.py` (16 — each reducer, determinism /
+input-order-independence, owner-exclusive overlap fail, aggregate unknown-reducer
+fail, grammar accept/reject, `merge` dispatch). `tests/test_board_lint.py` +13
+(R10 grammar + zone-anchor; wave-guard: same-zone pair FORBIDDEN without policy,
+PERMITTED with a shared valid policy, forbidden on mismatch/invalid,
+`zone_wave_conflicts` accept/reject/ignore-singletons).
+
+**VERIFY (all green):** pytest 839 passed / 1 skipped; `board_lint` 0;
+`check_dependency_graph` clean; `check_never_auto_approve` clean;
+`diagnostics` 100/100; `check_cache_prefix` OK. ruff clean.
+
+**Default-still-forbids guarantee:** `same_zone_pair_allowed` returns `False`
+for any same-zone pair lacking a shared valid permitting policy — proven by
+`test_same_zone_pair_forbidden_without_policy` and
+`test_zone_wave_conflicts_rejects_unpermitted_pair`.
+
+→ `status: in_review`, assignee `cto` (ROUTING; never self-review).
+SAFETY FLAG for reviewer: this widens the wave-correctness guard — scrutinize the
+fail-closed default and the exported predicate. Note: no WS1 dispatch ticket yet
+wires `same_zone_pair_allowed`/`zone_wave_conflicts` into live dispatch (SKILL
+step 3 remains prose); that wiring is a follow-up per the ticket's own scoping.

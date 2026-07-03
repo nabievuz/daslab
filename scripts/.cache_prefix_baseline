@@ -1,5 +1,5 @@
 {
-  "stable_prefix_sha256": "35924d8d958ac2a4c0c5a9ee4653bfe6cf7fa6cc95c5f720ac4016f9c00b7269",
-  "cache_prefix_version": "v11-fanout-deferred",
+  "stable_prefix_sha256": "5398857cf9984a099bfb02a91c8498d66b0b83117461e8e720d034f9a704870c",
+  "cache_prefix_version": "v12-merge-policies",
   "note": "Written by check_cache_prefix.py --fix.  Commit this file together with any stable-prefix changes."
 }
