@@ -1,7 +1,7 @@
 ---
 id: DAS-1446
 title: Interrupt-cards schema + interrupted status enum (P3)
-status: in_review
+status: done
 assignee: cto
 author: ceo
 dept: engineering
@@ -164,3 +164,39 @@ Committed LOCAL-ONLY to `feat/das-1446-interrupt-schema` (no push/PR per ORGANIS
 LOCAL-ONLY git strategy). This is security/governance-touching → set `in_review`,
 assignee `cto` for a CTO review in the next wave (no same-wave compression, per the
 cycle security guard). Produces `interrupt-schema`, consumed by DAS-1447.
+
+### 2026-07-03 — CTO (blocking security review — PASS)
+Reviewed the full `git diff main` as security reviewer (LAW 2, no compression —
+this touches the status enum + a validator). **Verdict: PASS → done.** Note:
+LOCAL-ONLY build, so "done" here = green local validators + this review, not a
+merged remote PR (no push/PR per the ORGANISM LOCAL-ONLY strategy).
+
+**What I checked against source (not just the ticket's own claims):**
+1. **`interrupted` strands/mis-handles nothing.** R8 (`board_lint.py`) guards
+   `status == "in_review" and assignee == author` — verified at the source line;
+   an `interrupted` ticket is out of scope, never rejected/stranded. `/daslab-cycle`
+   step-3 selection order is `p0 → in_review → in_progress → todo` (SKILL.md:78-79)
+   — `interrupted` is absent, so it is parked (non-actionable), not dispatched, not
+   coerced to `blocked`; step-2 reassignment guard is scoped to `in_review` only, so
+   it does not touch it. `board/ROUTING.md` reviewer map applies only to `in_review`
+   — no `interrupted` reviewer semantics. Consumer sweep matches the code.
+2. **Schema + `resume:<value>` contract is sound, no smuggling.** `schema.json`
+   sets `additionalProperties: false` (no extra field injection), `options` is a
+   non-empty `uniqueItems` array of non-empty strings, `ticket` is pinned to
+   `^DAS-[0-9]+$`, `payload` must be an object. The answer contract is fixed here:
+   `<value>` MUST be one of `options` — runtime enforcement is correctly deferred to
+   the DAS-1447 consumer; the design does not permit an out-of-set value by contract.
+3. **Idempotency (DAS-1447 scope) is not precluded.** One card = one file at
+   `board/interrupts/<id>.json`; the schema carries no answered/consumed field but
+   nothing in it prevents DAS-1447 from removing/marking the card on resume or making
+   injection idempotent. Additive-only, no consumer reads the schema yet.
+4. **Tests cover the new status:** positive (`test_interrupted_status_accepted`),
+   end-to-end on disk (`test_load_tickets_interrupted_file`), R8-scope regression
+   (`test_interrupted_not_subject_to_self_review_r8`), and negative — enum stays
+   closed, a typo status is still rejected (`test_unknown_status_still_rejected`).
+
+**Validators re-run in the worktree (all green):** `board_lint` 0 violations (17
+tickets); `check_never_auto_approve` clean (17); `pytest tests/test_board_lint.py`
+25 passed; `diagnostics` 100/100; `schema.json` parses as valid JSON.
+
+Signed off. Ready for DAS-1447 (runtime consumer) to build on the accepted schema.
