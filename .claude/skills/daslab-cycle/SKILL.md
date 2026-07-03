@@ -115,7 +115,16 @@ the selection step — keep those.
    same repo area / file set in the same wave — use the declared `zone:` field
    (ADR-0016) when both tickets have one, else fall back to `parent` + title
    overlap; the loser waits for the next wave. Parallel work on the same files
-   causes merge conflicts and rework, which *lowers* throughput. A ticket whose
+   causes merge conflicts and rework, which *lowers* throughput.
+   **Opt-in widening (default stays closed):** a same-zone *pair* MAY run in one
+   wave ONLY when every ticket in that zone declares the SAME valid, permitting
+   `merge_policy:` (`append-only` / `owner-exclusive` / `aggregate:<reducer>`),
+   whose parallel outputs are then merged deterministically by
+   `scripts/merge_reducers.py`. With no policy — or a mismatched/invalid one —
+   the pair is still forbidden (fail-closed). The decision is the exported,
+   fail-closed `board_lint.same_zone_pair_allowed` / `zone_wave_conflicts`
+   predicate; it only ever *widens* the guard, never weakens the no-policy
+   default. A ticket whose
    `depends_on:` names an id that is not yet `done` is NOT actionable — skip it
    and count it `dep-blocked` (like the AADL gate-order skip).
    **Fanout deferred-synthesis guard:** A ticket carrying `defer: true` is a
@@ -510,7 +519,7 @@ It fails the build if:
 Run standalone: `python3 scripts/check_cache_prefix.py`
 CI: wired into the `validate` job in `.github/workflows/ci.yml`.
 
-CACHE_PREFIX_VERSION: v12-interrupt-roundtrip
+CACHE_PREFIX_VERSION: v13-interrupt-mergepolicy
 
 ## Boundaries
 

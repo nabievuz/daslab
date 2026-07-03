@@ -24,6 +24,22 @@ Rules enforced
    ``project:`` field — project tickets live in ``projects/<slug>/board-tickets/``
    (QONUN — Project Placement Law). Project boards (path ``…/board-tickets/``)
    are exempt; the field is valid there.
+10. ``merge_policy`` (OPTIONAL) is well-formed: when present its value is one of
+   ``append-only`` / ``owner-exclusive`` / ``aggregate:<reducer>`` (grammar owned
+   by ``scripts/merge_reducers.py``); a present-but-empty or unrecognized value
+   is a defect, and a ``merge_policy`` declared WITHOUT a ``zone:`` anchor is a
+   defect. R10 is a per-ticket grammar check only.
+
+Wave correctness guard (exported, not a whole-board rule)
+--------------------------------------------------------
+The "never two tickets in the same repo ``zone:`` in one wave" correctness guard
+(ADR-0016) is a **per-wave** property, not repo state — the board legitimately
+holds many same-zone tickets across different waves. So it is NOT enforced over
+the whole board here (that would false-positive). Instead this module exports
+``same_zone_pair_allowed`` / ``zone_wave_conflicts`` — pure, fail-closed
+decision helpers over a *candidate wave* that ``/daslab-cycle`` (and tests) call.
+The default is unchanged: a same-zone pair is FORBIDDEN unless every member of
+the same-zone group declares the SAME valid, permitting ``merge_policy``.
 
 Usage::
 
@@ -40,6 +56,7 @@ import sys
 from pathlib import Path
 
 from _paths import ROOT
+from merge_reducers import is_valid_policy
 
 # ---------------------------------------------------------------------------
 # Idempotency warning patterns (R10 — DAS-1447)
@@ -129,6 +146,86 @@ def parse_frontmatter(text: str) -> dict[str, str] | None:
             value = value[1:-1]
         data[key] = value
     return data
+
+
+# ---------------------------------------------------------------------------
+# Tolerant field readers (zone / merge_policy)
+# ---------------------------------------------------------------------------
+# The regex parser captures every value as a raw string. These helpers strip
+# surrounding whitespace and inline YAML quotes so callers compare clean values.
+# They mirror the tolerant read pattern in check_dependency_graph._fm_field.
+
+def _zone_of(fm: dict[str, str]) -> str:
+    """Return the ticket's declared ``zone:``, cleaned; '' if absent/empty."""
+    return fm.get("zone", "").strip().strip('"').strip("'")
+
+
+def _merge_policy_of(fm: dict[str, str]) -> str:
+    """Return the ticket's declared ``merge_policy:``, cleaned; '' if absent."""
+    return fm.get("merge_policy", "").strip().strip('"').strip("'")
+
+
+# ---------------------------------------------------------------------------
+# Wave correctness guard — same-zone pair decision (exported, fail-closed)
+# ---------------------------------------------------------------------------
+# SAFETY: these decide whether two tickets touching the SAME repo zone may run
+# in ONE wave. They are called by /daslab-cycle at dispatch (and by tests), NOT
+# over the whole board (the board holds many same-zone tickets across waves).
+# The default is fail-closed: a same-zone pair is forbidden UNLESS every member
+# declares the SAME valid, permitting merge_policy for that zone.
+
+def same_zone_pair_allowed(fm_a: dict[str, str], fm_b: dict[str, str]) -> bool:
+    """Return True iff two tickets MAY co-dispatch in one wave.
+
+    Fail-closed contract:
+    - Different (or absent) zones → not a same-zone pair; the guard does not
+      apply, so the pair is allowed (returns True).
+    - SAME non-empty zone but no / mismatched / empty / invalid merge_policy →
+      FORBIDDEN (returns False). This is the unchanged default.
+    - SAME non-empty zone AND both declare the SAME valid permitting
+      merge_policy → allowed (returns True).
+    """
+    za, zb = _zone_of(fm_a), _zone_of(fm_b)
+    if not za or za != zb:
+        return True  # not a same-zone pair — guard is silent
+    pa, pb = _merge_policy_of(fm_a), _merge_policy_of(fm_b)
+    if not pa or pa != pb:
+        return False  # same zone, no shared policy → default forbids
+    return is_valid_policy(pa)  # same zone + same valid permitting policy → OK
+
+
+def zone_wave_conflicts(
+    tickets: list[tuple[Path, dict[str, str]]],
+) -> list[str]:
+    """Return violation strings for same-zone groups in a *candidate wave*.
+
+    A same-zone group of two or more tickets is permitted to co-dispatch ONLY
+    when every member declares the SAME valid, permitting ``merge_policy``.
+    Otherwise every such group is a violation (fail-closed default). Groups of
+    one, and tickets with no ``zone:``, are ignored.
+    """
+    by_zone: dict[str, list[tuple[Path, dict[str, str]]]] = {}
+    for path, fm in tickets:
+        zone = _zone_of(fm)
+        if zone:
+            by_zone.setdefault(zone, []).append((path, fm))
+
+    violations: list[str] = []
+    for zone, group in sorted(by_zone.items()):
+        if len(group) < 2:
+            continue
+        policies = {_merge_policy_of(fm) for _p, fm in group}
+        if len(policies) == 1:
+            (pol,) = tuple(policies)
+            if pol and is_valid_policy(pol):
+                continue  # zone opted in with one shared valid policy → allowed
+        ids = sorted((fm.get("id") or p.name) for p, fm in group)
+        violations.append(
+            f"same-zone wave conflict on zone '{zone}': {ids} would co-dispatch "
+            "but do not all declare the same permitting merge_policy "
+            "(default forbids two same-zone tickets in one wave)"
+        )
+    return violations
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +323,23 @@ def lint_tickets(
                 "project tickets belong in projects/<slug>/board-tickets/ "
                 "(board/tickets/ is DasLab-platform only)"
             )
+
+        # R10 — merge_policy grammar + zone anchor (per-ticket check).
+        # Optional: additive, so tickets without it lint exactly as before. The
+        # grammar is owned by scripts/merge_reducers.py (single source of truth).
+        if "merge_policy" in fm:
+            merge_policy = _merge_policy_of(fm)
+            zone = _zone_of(fm)
+            if not merge_policy:
+                err("merge_policy is present but empty; remove it or set "
+                    "append-only / owner-exclusive / aggregate:<reducer>")
+            elif not is_valid_policy(merge_policy):
+                err(f"invalid merge_policy '{merge_policy}'; allowed: "
+                    "append-only, owner-exclusive, aggregate:<sum|union>")
+            if merge_policy and not zone:
+                err("merge_policy declared without a zone: to anchor it "
+                    "(a merge policy relaxes the same-zone wave guard, so it "
+                    "needs a zone)")
 
     return errors
 

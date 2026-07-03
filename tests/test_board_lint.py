@@ -28,7 +28,13 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
-from board_lint import lint_tickets, load_known_roles, load_tickets  # noqa: E402
+from board_lint import (  # noqa: E402
+    lint_tickets,
+    load_known_roles,
+    load_tickets,
+    same_zone_pair_allowed,
+    zone_wave_conflicts,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -316,6 +322,112 @@ def test_project_field_on_project_board_is_exempt() -> None:
     errors = lint_tickets(pairs, _KNOWN_ROLES)
     project_errors = [e for e in errors if "project tickets belong in" in e]
     assert not project_errors, errors
+
+
+# ---------------------------------------------------------------------------
+# R10 — merge_policy grammar + zone anchor (DAS-1448)
+# ---------------------------------------------------------------------------
+
+
+def test_merge_policy_valid_forms_accepted() -> None:
+    for pol in ("append-only", "owner-exclusive", "aggregate:sum", "aggregate:union"):
+        ticket = make_ticket(zone="scripts/x", merge_policy=pol)
+        errors = run_lint([ticket])
+        mp_errors = [e for e in errors if "merge_policy" in e]
+        assert not mp_errors, f"policy '{pol}' unexpectedly flagged: {errors}"
+
+
+def test_merge_policy_empty_value_fires() -> None:
+    ticket = make_ticket(zone="scripts/x", merge_policy="")
+    errors = run_lint([ticket])
+    assert any("merge_policy is present but empty" in e for e in errors), errors
+
+
+def test_merge_policy_unknown_value_fires() -> None:
+    ticket = make_ticket(zone="scripts/x", merge_policy="aggregate:max")
+    errors = run_lint([ticket])
+    assert any("invalid merge_policy" in e for e in errors), errors
+
+
+def test_merge_policy_without_zone_fires() -> None:
+    ticket = make_ticket(merge_policy="append-only")  # no zone anchor
+    errors = run_lint([ticket])
+    assert any("merge_policy declared without a zone" in e for e in errors), errors
+
+
+def test_no_merge_policy_is_clean() -> None:
+    """Additive: a ticket without merge_policy lints exactly as before."""
+    ticket = make_ticket(zone="scripts/x")
+    errors = run_lint([ticket])
+    assert not any("merge_policy" in e for e in errors), errors
+
+
+# ---------------------------------------------------------------------------
+# Wave correctness guard — same-zone pair decision (DAS-1448, SAFETY)
+# ---------------------------------------------------------------------------
+
+
+def test_same_zone_pair_forbidden_without_policy() -> None:
+    """DEFAULT: two same-zone tickets with no merge_policy may NOT co-dispatch."""
+    a = make_ticket(id="DAS-9001", zone="scripts/board_lint")
+    b = make_ticket(id="DAS-9002", zone="scripts/board_lint")
+    assert same_zone_pair_allowed(a, b) is False
+
+
+def test_same_zone_pair_permitted_with_shared_policy() -> None:
+    """OPT-IN: same zone + same valid permitting policy → co-dispatch allowed."""
+    a = make_ticket(id="DAS-9001", zone="scripts/log", merge_policy="append-only")
+    b = make_ticket(id="DAS-9002", zone="scripts/log", merge_policy="append-only")
+    assert same_zone_pair_allowed(a, b) is True
+
+
+def test_same_zone_pair_forbidden_with_mismatched_policy() -> None:
+    """Fail-closed: the two tickets must declare the SAME policy."""
+    a = make_ticket(id="DAS-9001", zone="scripts/log", merge_policy="append-only")
+    b = make_ticket(id="DAS-9002", zone="scripts/log", merge_policy="owner-exclusive")
+    assert same_zone_pair_allowed(a, b) is False
+
+
+def test_same_zone_pair_forbidden_with_invalid_policy() -> None:
+    """Fail-closed: an invalid policy on both never widens the guard."""
+    a = make_ticket(id="DAS-9001", zone="scripts/log", merge_policy="aggregate:max")
+    b = make_ticket(id="DAS-9002", zone="scripts/log", merge_policy="aggregate:max")
+    assert same_zone_pair_allowed(a, b) is False
+
+
+def test_different_zones_not_a_same_zone_pair() -> None:
+    """Guard is silent for different (or absent) zones — pair allowed."""
+    a = make_ticket(id="DAS-9001", zone="scripts/a")
+    b = make_ticket(id="DAS-9002", zone="scripts/b")
+    assert same_zone_pair_allowed(a, b) is True
+    c = make_ticket(id="DAS-9003")  # no zone at all
+    d = make_ticket(id="DAS-9004")
+    assert same_zone_pair_allowed(c, d) is True
+
+
+def test_zone_wave_conflicts_rejects_unpermitted_pair() -> None:
+    fake = Path("board/tickets/DAS-FAKE.md")
+    a = make_ticket(id="DAS-9001", zone="scripts/board_lint")
+    b = make_ticket(id="DAS-9002", zone="scripts/board_lint")
+    conflicts = zone_wave_conflicts([(fake, a), (fake, b)])
+    assert len(conflicts) == 1
+    assert "same-zone wave conflict" in conflicts[0]
+    assert "scripts/board_lint" in conflicts[0]
+
+
+def test_zone_wave_conflicts_allows_permitted_pair() -> None:
+    fake = Path("board/tickets/DAS-FAKE.md")
+    a = make_ticket(id="DAS-9001", zone="scripts/log", merge_policy="append-only")
+    b = make_ticket(id="DAS-9002", zone="scripts/log", merge_policy="append-only")
+    assert zone_wave_conflicts([(fake, a), (fake, b)]) == []
+
+
+def test_zone_wave_conflicts_ignores_singletons_and_zoneless() -> None:
+    fake = Path("board/tickets/DAS-FAKE.md")
+    a = make_ticket(id="DAS-9001", zone="scripts/a")
+    b = make_ticket(id="DAS-9002", zone="scripts/b")
+    c = make_ticket(id="DAS-9003")  # no zone
+    assert zone_wave_conflicts([(fake, a), (fake, b), (fake, c)]) == []
 
 
 # ---------------------------------------------------------------------------
