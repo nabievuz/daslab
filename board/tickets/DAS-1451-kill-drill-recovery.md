@@ -1,8 +1,8 @@
 ---
 id: DAS-1451
 title: Kill-drill in check_recovery + fork-drill (T5 gate)
-status: todo
-assignee: qa-lead
+status: in_review
+assignee: cto
 author: ceo
 dept: engineering
 priority: p1
@@ -106,3 +106,67 @@ expensive; the fast smoke variant is cheap. Put the **cheap** smoke drill into C
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — QA Lead
+Built a REAL kill/resume + fork drill and wired it into the existing T5 gate. All
+acceptance criteria met; full suite green. Set `status: in_review`, `assignee: cto`
+(ROUTING — my manager; never review my own work). Local-only, no push/PR.
+
+**New:** `scripts/kill_drill.py` (drill driver), `tests/test_kill_drill.py` (13
+tests), `.github/workflows/recovery-drill.yml` (scheduled expensive tier). Edited
+`.github/workflows/ci.yml` (cheap smoke step) and `tests/test_dgox_phase1_shadow.py`
+(`_EVENT_PRODUCERS += kill_drill.py`). No change to `check_recovery.py`,
+`metrics_lib.recovery_reliability()`, `replay_qa.py`, `pulse_checkpoint.py`, or
+`resume_fork.py` — EXTEND, not replace.
+
+**Drill design (kill-mid-wave-2).** `run_kill_drill` writes a synthetic-run spec
+and spawns a REAL child (`--worker`) that drives a 3-wave run, durably
+(O_APPEND+fsync) emitting `routing_decision` events (via the dgox typed builder) +
+per-ticket `ticket_completion` records (via `pulse_checkpoint`, DAS-1444), with a
+wave-boundary checkpoint each wave. Mid-wave-2 the child issues a genuine
+`os.kill(getpid, SIGKILL)` — no cleanup/atexit/flush; the parent confirms death by
+`returncode == -9`. The parent then resumes via `resume_fork.resume_run` (DAS-1445),
+which replays the durable log + completion records and returns only the tickets
+still needing work; it re-dispatches exactly those (resuming started-but-unfinished
+tickets from their last recorded status, cold-starting never-started ones), skipping
+anything durably terminal in the log or already recorded complete (idempotent — the
+DAS-1447 guard-before-act window is covered by the `after_done` idempotency test).
+
+**Zero lost / zero duplicated.** Verified per-ticket via `replay_qa.replay_run`
+(reused, not re-implemented): every planned ticket reaches a terminal state (zero
+lost), no ticket's transition chain is corrupted, and every ticket has exactly one
+completion record (zero duplicated). A double-dispatch would surface as a
+`done -> todo` broken chain → corrupted → gate FAIL, so the guardrail is live.
+
+**T5 result.** `--iterations 20` → 20 kill drills + 1 fork drill = 21
+`recovery_drill` events; `check_recovery.py` reports **ratio 1.000 ≥ 0.99, corrupted
+0 over 21 drills, exit 0**. Every iteration: `killed=True, zero_lost=True,
+zero_dup=True, chain_clean=True`. (~2s for 20 iters.)
+
+**Fork-drill divergence proof.** Base run takes DAS-8501 `in_progress`(wave-1) →
+`done`(wave-2). `resume_fork.fork_run` at wave-1 mints a new run_id inheriting
+`{DAS-8501: in_progress}`; the fork is driven to `blocked` in its OWN event store +
+checkpoint tree. Divergence: fork final `{DAS-8501: blocked}` ≠ original
+`{DAS-8501: done}`. Original intact: base event store + both checkpoints
+byte-identical before/after, still replays clean to `done`, fresh run_id ≠ base.
+
+**Event emission.** `emit_recovery_drill` writes the EXACT `replay_qa --emit` shape;
+the outcome/corrupted verdict is derived from `replay_qa.replay_run` PER TICKET
+(replay_qa's top-level `drill()` groups a whole run as one chain — correct for its
+single-ticket runs, wrong for a multi-ticket drill run, so the ticket's sanctioned
+"equivalent writer" path is used). Interop with the shipped `replay_qa --emit` is
+proven on the single-ticket fork store (test). Corrupted-resume → gate exit 1 is
+tested. `check_recovery.py` default no-arg path stays inert (exit 0) — unchanged.
+
+**CI/scheduled wiring.** ci.yml (every PR): `kill_drill.py --smoke` (1 kill + 1
+fork, throwaway temp store, never board/.events.jsonl). recovery-drill.yml (daily
+cron + workflow_dispatch): `kill_drill.py --iterations 50` on ubuntu+macos.
+
+**Verify (full suite, from the worktree):** `pytest -q` → 1006 passed, 1 skipped, 0
+failed · `diagnostics.py` → 100/100 · `board_lint.py` → 0 · `check_recovery.py`
+(default) → exit 0 (inert, contract unchanged) · `ruff check scripts tests` → clean.
+
+**Route to reviewer (CTO):** the shadow-rule ADR supersession that DAS-1445 flagged
+(ADR-0010 C3 / ADR-0011 Phase-1 — events becoming load-bearing for operator-invoked
+recovery) now has a third participant (`kill_drill.py` in `_EVENT_PRODUCERS`); the
+recommended follow-up ADR remains open and is worth a tracked ticket.

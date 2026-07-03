@@ -486,7 +486,13 @@ class TestShadowClean:
         #   to canonicalize "events are load-bearing for explicit operator-invoked
         #   recovery" vs "events are advisory-only for normal dispatch".  The orchestrator
         #   should create a follow-up ADR ticket (see DAS-1445 log).
-        _EVENT_PRODUCERS = {"pulse_checkpoint.py", "dispatch_emitter.py"}
+        # DAS-1451 — kill_drill.py (GATE-4 kill/resume + fork drill driver):
+        #   an event PRODUCER (writes routing_decision/checkpoint/completion via the
+        #   dgox builders + pulse_checkpoint) that reads events ONLY through
+        #   resume_fork in the explicit operator-invoked drill path — never in the
+        #   normal /daslab-cycle dispatch path. Same posture as resume_fork's scoped
+        #   recovery reader; "flag-on == flag-off dispatch" for real waves is intact.
+        _EVENT_PRODUCERS = {"pulse_checkpoint.py", "dispatch_emitter.py", "kill_drill.py"}
         scripts_dir = _SCRIPTS
         py_files = [
             p
