@@ -1,7 +1,7 @@
 ---
 id: DAS-1450
 title: Result-cache (P6) + fix check_cache_prefix _MIN_TOKENS threshold
-status: in_review
+status: done
 assignee: backend-em
 author: ceo
 dept: engineering
@@ -151,3 +151,6 @@ Implemented both deliverables on branch `feat/das-1450-result-cache` (commit f85
 - `python3 scripts/board_lint.py` → 0 errors (17 tickets)
 - `python3 scripts/check_cache_prefix.py` → exit 0 (~5250 tokens ≥ 4096)
 - `pytest` → 743 passed, 1 skipped, 0 failed
+
+### 2026-07-03 — Orchestrator (/daslab-cycle collect)
+Done via local-only done-gate: green diagnostics(100/100)/board_lint/pytest(810) + combined-merge verification (pure-code review collapsed into orchestrator+validator verification per local-only strategy). Result-cache module + _MIN_TOKENS 1024->4096 (claude-api verified). cache_hit event union-merged into events.py; merged to local main.
