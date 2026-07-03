@@ -133,6 +133,11 @@ jobs:
       # --- operational maturity ---
       - name: Replay-QA recovery drills (T5 / RFC-003)
         run: python3 scripts/replay_qa.py
+      - name: Kill/fork recovery drill — cheap smoke (T5 / DAS-1451)
+        # Real kill -9 mid-wave-2 + resume + fork, into a throwaway temp store
+        # (never board/.events.jsonl). The >=20-iteration accumulation runs on the
+        # scheduled recovery-drill.yml workflow to keep PR latency low.
+        run: python3 scripts/kill_drill.py --smoke
       - name: Operator trust tools render (R10/R11/R15, smoke)
         run: |
           echo '{"ticket_type":"feature","stage":"GATE-3","paths":["src/x.py"]}' > "${RUNNER_TEMP:-/tmp}/intent_smoke.json"
