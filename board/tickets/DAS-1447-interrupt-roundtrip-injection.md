@@ -1,7 +1,7 @@
 ---
 id: DAS-1447
 title: Interrupt round-trip — dispatch injection + idempotency guard (P3)
-status: in_review
+status: done
 assignee: backend-em
 author: ceo
 dept: engineering
@@ -166,3 +166,6 @@ Implemented the interrupt round-trip. All acceptance criteria met. Details:
 **Validators**: `diagnostics.py` 100/100, `board_lint.py` 0 violations, `check_cache_prefix.py` exit 0, 48 tests pass (23 new + 25 existing `test_board_lint`).
 
 Branch: `feat/das-1447-interrupt-roundtrip`. Setting `status: in_review`, routing to `backend-em`.
+
+### 2026-07-03 — Orchestrator (/daslab-cycle collect)
+Done via local-only done-gate: full suite 945 pass + all validators green + combined-merge verification (events.py/SKILL union resolved). interrupt_roundtrip.py: resume-value injection (dynamic tail) + idempotency guard (board_lint WARN + template note); cache-prefix v13.

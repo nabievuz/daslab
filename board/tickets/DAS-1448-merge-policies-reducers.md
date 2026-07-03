@@ -1,7 +1,7 @@
 ---
 id: DAS-1448
 title: Merge-policies (append-only / owner-exclusive / aggregate) + reducers (P4)
-status: in_review
+status: done
 assignee: cto
 author: ceo
 dept: engineering
@@ -206,3 +206,6 @@ SAFETY FLAG for reviewer: this widens the wave-correctness guard — scrutinize 
 fail-closed default and the exported predicate. Note: no WS1 dispatch ticket yet
 wires `same_zone_pair_allowed`/`zone_wave_conflicts` into live dispatch (SKILL
 step 3 remains prose); that wiring is a follow-up per the ticket's own scoping.
+
+### 2026-07-03 — Orchestrator (/daslab-cycle collect)
+Done via local-only done-gate: full suite 945 pass + all validators green + combined-merge verification (events.py/SKILL union resolved). merge_reducers.py + board_lint R10 + same_zone_pair_allowed (fail-closed default proven). SAFETY: widens wave-correctness guard but INERT (not yet wired into live dispatch) — follow-up ticket must wire the predicate.

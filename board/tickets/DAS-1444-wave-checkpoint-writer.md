@@ -1,7 +1,7 @@
 ---
 id: DAS-1444
 title: Wave-checkpoint writer + per-ticket pending-writes completion record (P1)
-status: in_review
+status: done
 assignee: backend-em
 author: ceo
 dept: engineering
@@ -136,3 +136,6 @@ Implemented wave-checkpoint writer in `scripts/pulse_checkpoint.py` (new module,
 **Branch:** `feat/das-1444-checkpoint-writer` — commit `6afa94c` (local-only, no push per ticket instructions).
 
 Routing to Backend EM for review.
+
+### 2026-07-03 — Orchestrator (/daslab-cycle collect)
+Done via local-only done-gate: full suite 945 pass + all validators green + combined-merge verification (events.py/SKILL union resolved). pulse_checkpoint.py: ULID + delta checkpoints + ledger chain + crash-resume guard; ticket_completion event (Shape H). 164+ tests.

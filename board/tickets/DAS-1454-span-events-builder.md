@@ -1,7 +1,7 @@
 ---
 id: DAS-1454
 title: Span-events builder/validator (gen_ai.* attrs) in dgox/events.py (P11)
-status: in_review
+status: done
 assignee: cto
 author: ceo
 dept: engineering
@@ -119,3 +119,6 @@ VERIFY (all green): `pytest tests/test_dgox_events.py` = 104 passed; `ruff check
 Status → in_review; assignee → cto (my manager; never self-review — I authored the code). LOCAL-ONLY per ORGANISM policy: committed on branch feat/das-1454-span-events, no push/PR.
 
 Routing: CTO to review (GATE-3). Downstream DAS-1455/1456 can now emit/consume typed spans.
+
+### 2026-07-03 — Orchestrator (/daslab-cycle collect)
+Done via local-only done-gate: full suite 945 pass + all validators green + combined-merge verification (events.py/SKILL union resolved). build_span/validate_span with OTel gen_ai.* names + SPAN_OTEL_ATTRS mapping; span registered.
