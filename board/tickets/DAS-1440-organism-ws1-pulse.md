@@ -1,7 +1,7 @@
 ---
 id: DAS-1440
 title: ORGANISM WS1 — PULSE (durable execution core)
-status: backlog
+status: done
 assignee: cto
 author: ceo
 dept: engineering
@@ -178,3 +178,6 @@ below. Each gate's checklist is pulled from
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — Orchestrator (/daslab-run)
+Epic closed. ORGANISM WS1 PULSE — durable execution core CLOSED. AADL 6 gates: GATE-1 ADR-0023 run-model; GATE-2 typed run/checkpoint/span-adjacent builders + interrupt-card schema + `interrupted` status; GATE-3 wave-checkpoints(delta+ledger) / resume+fork / interrupt round-trip / merge-policies / fanout / result-cache; GATE-4 real SIGKILL kill-drill T5=1.000>=0.99 (zero lost/dup) + fork-drill; GATE-5 wired into /daslab-cycle (organism_emit OFF, 4 guards verbatim, no timer); GATE-6 recovery drills scheduled (CI smoke + scheduled tier). Children DAS-1442..1452 all done.

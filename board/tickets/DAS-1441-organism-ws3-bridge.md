@@ -1,7 +1,7 @@
 ---
 id: DAS-1441
 title: ORGANISM WS3 — BRIDGE (observability & cost) — slice 1 emitter seam
-status: backlog
+status: done
 assignee: cto
 author: ceo
 dept: engineering
@@ -139,3 +139,6 @@ inside a pure builder; the T7 rubric is immutable; anti-gaming R-9 stands
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — Orchestrator (/daslab-run)
+Epic closed. ORGANISM WS3 BRIDGE slice-1 (emitter seam) CLOSED. ADR-0024 span schema (OTel gen_ai.* names); build_span/validate_span; the dispatch emitter (the missing producer — makes T1/T3/T4 compute REAL numbers, ending 'false-green'); wave_kpi/T-validators recompute from spans + check_spans.py. Children DAS-1453/1454/1455/1456 all done. Slice-2 (cost-ledger, alerting, committed-evidence) + the shadow-rule ADR remain.
