@@ -32,12 +32,16 @@ if str(_SCRIPTS) not in sys.path:
 import metrics_lib  # noqa: E402
 from dgox.events import (  # noqa: E402
     RUN_END_METRICS_FIELDS,
+    SPAN_KINDS,
+    SPAN_OTEL_ATTRS,
+    SPAN_STATUSES,
     EventStore,
     build_agent_invocation,
     build_checkpoint,
     build_routing_decision,
     build_run_end,
     build_run_start,
+    build_span,
     build_wave,
     iter_events,
     utcnow,
@@ -47,6 +51,7 @@ from dgox.events import (  # noqa: E402
     validate_routing_decision,
     validate_run_end,
     validate_run_start,
+    validate_span,
     validate_wave,
 )
 
@@ -144,6 +149,31 @@ def _make_checkpoint_event(**overrides):
     }
     defaults.update(overrides)
     return build_checkpoint(**defaults)
+
+
+# A root run span: 12:00:00 → 12:03:20 = 200 s = 200000 ms; cache-warm.
+SPAN_START = "2026-07-03T12:00:00Z"
+SPAN_END = "2026-07-03T12:03:20Z"
+
+
+def _make_span_event(**overrides):
+    defaults = {
+        "ticket_id": "DAS-1453",
+        "span_id": "01J9ZB2K7Q0W9E4R5T6Y7U8ISP",
+        "parent_span_id": None,
+        "kind": "run",
+        "agent_name": "cto",
+        "model": "opus",
+        "start": SPAN_START,
+        "end": SPAN_END,
+        "created_at": SPAN_END,
+        "input_tokens": 18450,
+        "output_tokens": 5120,
+        "cached_input_tokens": 16000,
+        "status": "ok",
+    }
+    defaults.update(overrides)
+    return build_span(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +659,183 @@ class TestCheckpoint:
         ev["ticket_states"] = ["not", "a", "dict"]
         errors = validate_checkpoint(ev)
         assert any("ticket_states" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# Shape H — span (ORGANISM WS3 BRIDGE — ADR 0024, OTel GenAI attr names)
+# ---------------------------------------------------------------------------
+
+
+class TestSpan:
+    def test_build_produces_expected_shape(self):
+        ev = _make_span_event()
+        assert ev["event_type"] == "span"
+        assert ev["ticket_id"] == "DAS-1453"
+        # trace_id is derived from ticket_id (a run is traced under its ticket).
+        assert ev["trace_id"] == "DAS-1453"
+        assert ev["span_id"] == "01J9ZB2K7Q0W9E4R5T6Y7U8ISP"
+        assert ev["parent_span_id"] is None  # root span
+        assert ev["kind"] == "run"
+        assert ev["start"] == SPAN_START
+        assert ev["end"] == SPAN_END
+        # duration_ms is DERIVED from start/end (no clock read): 200 s = 200000 ms.
+        assert ev["duration_ms"] == 200000
+        assert ev["status"] == "ok"
+        assert ev["created_at"] == SPAN_END
+        # run_id absent when not supplied.
+        assert "run_id" not in ev
+
+    def test_build_uses_otel_gen_ai_attribute_names(self):
+        # The JSON field names ARE the OpenTelemetry GenAI semantic-convention
+        # attribute names (ADR 0024 §2) — a rename here breaks the future exporter.
+        ev = _make_span_event()
+        assert ev["gen_ai.agent.name"] == "cto"
+        assert ev["gen_ai.request.model"] == "opus"
+        assert ev["gen_ai.usage.input_tokens"] == 18450
+        assert ev["gen_ai.usage.output_tokens"] == 5120
+        assert ev["gen_ai.usage.cached_input_tokens"] == 16000
+        # No ad-hoc alias leaked in alongside the OTel names.
+        for adhoc in ("agent_name", "input_tokens", "output_tokens", "model", "tier"):
+            assert adhoc not in ev
+        # The OTel mapping is the single source of truth and every mapped key
+        # appears verbatim on the built event.
+        for otel_name in SPAN_OTEL_ATTRS.values():
+            if otel_name != "gen_ai.operation.name":  # kind maps to a concept, key is 'kind'
+                assert otel_name in ev
+
+    def test_build_with_run_id(self):
+        ev = _make_span_event(run_id="01J9Z8QK3M7Q0W9E4R5T6Y7U8I")
+        assert ev["run_id"] == "01J9Z8QK3M7Q0W9E4R5T6Y7U8I"
+
+    def test_cached_flag_derived_from_cached_tokens(self):
+        assert _make_span_event(cached_input_tokens=16000)["cached"] is True
+        assert _make_span_event(cached_input_tokens=0)["cached"] is False
+
+    def test_child_span_has_parent(self):
+        ev = _make_span_event(
+            kind="execute_tool",
+            parent_span_id="01J9ZB2K7Q0W9E4R5T6Y7U8ISP",
+            input_tokens=0,
+            output_tokens=0,
+            cached_input_tokens=0,
+        )
+        assert ev["parent_span_id"] == "01J9ZB2K7Q0W9E4R5T6Y7U8ISP"
+        assert ev["cached"] is False
+
+    def test_validate_valid_event_no_errors(self):
+        assert validate_span(_make_span_event()) == []
+
+    def test_validate_root_and_all_kinds_ok(self):
+        for kind in SPAN_KINDS:
+            assert validate_span(_make_span_event(kind=kind)) == []
+        for status in SPAN_STATUSES:
+            assert validate_span(_make_span_event(status=status)) == []
+
+    def test_appendable_envelope_valid(self):
+        # span must satisfy the store envelope (append path) — 'span' is a
+        # registered event type in _VALID_EVENT_TYPES.
+        assert validate_envelope(_make_span_event()) == []
+
+    def test_validate_wrong_event_type_is_error(self):
+        ev = _make_span_event()
+        ev["event_type"] = "run"
+        errors = validate_span(ev)
+        assert any("span" in e for e in errors)
+
+    def test_validate_trace_id_must_equal_ticket_id(self):
+        ev = _make_span_event()
+        ev["trace_id"] = "DAS-9999"
+        errors = validate_span(ev)
+        assert any("trace_id" in e for e in errors)
+
+    def test_validate_blank_span_id_is_error(self):
+        ev = _make_span_event()
+        ev["span_id"] = ""
+        errors = validate_span(ev)
+        assert any("span_id" in e for e in errors)
+
+    def test_validate_bad_parent_span_id_is_error(self):
+        ev = _make_span_event()
+        ev["parent_span_id"] = ""  # neither None (root) nor a non-empty id
+        errors = validate_span(ev)
+        assert any("parent_span_id" in e for e in errors)
+
+    def test_validate_unknown_kind_is_error(self):
+        ev = _make_span_event()
+        ev["kind"] = "not_a_kind"
+        errors = validate_span(ev)
+        assert any("kind" in e for e in errors)
+
+    def test_validate_unknown_status_is_error(self):
+        ev = _make_span_event()
+        ev["status"] = "maybe"
+        errors = validate_span(ev)
+        assert any("status" in e for e in errors)
+
+    def test_validate_blank_agent_name_is_error(self):
+        ev = _make_span_event()
+        ev["gen_ai.agent.name"] = ""
+        errors = validate_span(ev)
+        assert any("gen_ai.agent.name" in e for e in errors)
+
+    def test_validate_negative_tokens_is_error(self):
+        ev = _make_span_event()
+        ev["gen_ai.usage.input_tokens"] = -1
+        errors = validate_span(ev)
+        assert any("gen_ai.usage.input_tokens" in e for e in errors)
+
+    def test_validate_non_int_tokens_is_error(self):
+        ev = _make_span_event()
+        ev["gen_ai.usage.output_tokens"] = "lots"
+        errors = validate_span(ev)
+        assert any("gen_ai.usage.output_tokens" in e for e in errors)
+
+    def test_validate_cached_must_be_bool(self):
+        ev = _make_span_event()
+        ev["cached"] = "yes"
+        errors = validate_span(ev)
+        assert any("cached must be a boolean" in e for e in errors)
+
+    def test_validate_cached_inconsistent_with_tokens_is_error(self):
+        ev = _make_span_event(cached_input_tokens=16000)
+        ev["cached"] = False  # contradicts cached_input_tokens > 0
+        errors = validate_span(ev)
+        assert any("cached must equal" in e for e in errors)
+
+    def test_validate_duration_mismatch_is_error(self):
+        ev = _make_span_event()
+        ev["duration_ms"] = 12345  # not (end - start)
+        errors = validate_span(ev)
+        assert any("duration_ms must equal" in e for e in errors)
+
+    def test_validate_negative_duration_is_error(self):
+        ev = _make_span_event()
+        ev["duration_ms"] = -5
+        errors = validate_span(ev)
+        assert any("duration_ms" in e for e in errors)
+
+    def test_validate_missing_ticket_id_propagates(self):
+        ev = _make_span_event()
+        del ev["ticket_id"]
+        errors = validate_span(ev)
+        assert any("ticket_id" in e for e in errors)
+
+    def test_span_round_trips_through_store(self, tmp_path):
+        store_path = tmp_path / "events.jsonl"
+        store = EventStore(store_path)
+        root = _make_span_event()
+        child = _make_span_event(
+            span_id="01CHILDSPAN000000000000000",
+            parent_span_id=root["span_id"],
+            kind="execute_tool",
+            input_tokens=0,
+            output_tokens=0,
+            cached_input_tokens=0,
+        )
+        store.append(root)  # envelope-valid → append must not raise
+        store.append(child)
+        read_back = list(iter_events(store_path, event_type="span"))
+        assert read_back == [root, child]
 
 
 # ---------------------------------------------------------------------------

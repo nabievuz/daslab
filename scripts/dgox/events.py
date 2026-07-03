@@ -122,6 +122,8 @@ _VALID_EVENT_TYPES = frozenset(
         "tool_unavailable",
         # result-cache observability (ORGANISM P6 — DAS-1450):
         "cache_hit",
+        # OTel GenAI trace span (ORGANISM WS3 BRIDGE — ADR 0024 / DAS-1454):
+        "span",
     }
 )
 
@@ -837,6 +839,276 @@ def build_cache_hit(
     if run_id is not None:
         event["run_id"] = run_id
     return event
+
+
+# ---------------------------------------------------------------------------
+# Shape H — span (ORGANISM WS3 BRIDGE — ADR 0024)
+# ---------------------------------------------------------------------------
+#
+# A distributed-trace-style record for one unit of agent work, carrying the
+# OpenTelemetry **GenAI semantic-convention attribute names** as its JSON field
+# names so a real OTLPSpanExporter is a field-mapping shim, not a schema
+# migration (ADR 0024 §2). The mapping table below is the single authoritative
+# change-point; a rename here silently breaks the future exporter.
+#
+#   JSON key                            -> OTel attribute / concept
+#   ----------------------------------  -> ---------------------------------
+#   trace_id                            -> trace_id (OTel Span core; = ticket id)
+#   span_id                             -> span_id  (OTel Span core)
+#   parent_span_id                      -> parent_span_id (null ⇒ root span)
+#   kind                                -> gen_ai.operation.name
+#   gen_ai.agent.name                   -> gen_ai.agent.name (verbatim)
+#   gen_ai.request.model                -> gen_ai.request.model (tier/model)
+#   start / end                         -> OTel span start / end time
+#   duration_ms                         -> daslab.span.duration_ms (derived)
+#   gen_ai.usage.input_tokens           -> gen_ai.usage.input_tokens (verbatim)
+#   gen_ai.usage.output_tokens          -> gen_ai.usage.output_tokens (verbatim)
+#   gen_ai.usage.cached_input_tokens    -> gen_ai.usage.cached_input_tokens
+#   cached                              -> daslab.usage.cached (bool)
+#   status                              -> OTel span status code (OK/ERROR)
+
+#: The OTel GenAI attribute names used as span JSON field names (single source
+#: of truth for the §2 mapping — a test asserts the builder emits exactly these).
+SPAN_OTEL_ATTRS: dict[str, str] = {
+    "kind": "gen_ai.operation.name",
+    "agent_name": "gen_ai.agent.name",
+    "model": "gen_ai.request.model",
+    "input_tokens": "gen_ai.usage.input_tokens",
+    "output_tokens": "gen_ai.usage.output_tokens",
+    "cached_input_tokens": "gen_ai.usage.cached_input_tokens",
+}
+
+#: Valid span kinds. invoke_agent/chat/execute_tool are OTel GenAI operation
+#: names verbatim; wave/run are DasLab orchestration spans (ADR 0024 §1).
+SPAN_KINDS = frozenset({"invoke_agent", "chat", "execute_tool", "wave", "run"})
+
+#: Valid span statuses (aligned with the OTel span status code, ADR 0024 §1).
+SPAN_STATUSES = frozenset({"ok", "error"})
+
+_SPAN_REQUIRED = frozenset(
+    {
+        "event_type",
+        "ticket_id",
+        "trace_id",
+        "span_id",
+        "parent_span_id",
+        "kind",
+        "gen_ai.agent.name",
+        "gen_ai.request.model",
+        "start",
+        "end",
+        "duration_ms",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_tokens",
+        "cached",
+        "status",
+        "created_at",
+    }
+)
+
+
+def _iso_to_dt(ts: str) -> datetime:
+    """Parse a caller-supplied ISO-8601 ``Z`` timestamp into a datetime.
+
+    Pure — no clock read. ``fromisoformat`` handles the trailing ``Z`` only on
+    3.11+, so it is normalised to ``+00:00`` for portability.
+    """
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+def _duration_ms(start: str, end: str) -> int:
+    """Derive span duration in milliseconds from caller-supplied start/end.
+
+    Pure derivation (ADR 0024 §3 — no clock read); ``end - start`` in ms.
+    """
+    return int((_iso_to_dt(end) - _iso_to_dt(start)).total_seconds() * 1000)
+
+
+def build_span(
+    *,
+    ticket_id: str,
+    span_id: str,
+    parent_span_id: str | None,
+    kind: str,
+    agent_name: str,
+    model: str,
+    start: str,
+    end: str,
+    created_at: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cached_input_tokens: int = 0,
+    status: str = "ok",
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a ``span`` event dict (Shape H — ADR 0024).
+
+    A distributed-trace span for one unit of agent work, using the OTel GenAI
+    semantic-convention attribute names as JSON field names (ADR 0024 §2). Two
+    fields are **derived** from caller-supplied inputs (no clock read, no
+    independent state): ``trace_id`` (:= ``ticket_id``, ADR 0024 §1),
+    ``duration_ms`` (:= ``end - start`` in ms), and ``cached``
+    (:= ``cached_input_tokens > 0``).
+
+    Args:
+        ticket_id:           DAS-NNNN ticket identifier; also the ``trace_id``
+                             (a run is traced under its ticket — ADR 0024 §1).
+        span_id:             Opaque unique id for this span (non-empty string).
+        parent_span_id:      Enclosing span's ``span_id``; ``None`` for a root
+                             span (a top-level ``run`` / ``wave``).
+        kind:                Span kind ∈ ``SPAN_KINDS`` (→ ``gen_ai.operation.name``).
+        agent_name:          Agent/role name (→ ``gen_ai.agent.name``).
+        model:               Model/tier the agent ran on — opus/sonnet/haiku or a
+                             full model id (→ ``gen_ai.request.model``). In DasLab
+                             tier and model are one axis (Model Allocation Law).
+        start:               Span start, caller-supplied ISO-8601 ``Z`` (never
+                             generated inside this pure helper).
+        end:                 Span end, caller-supplied ISO-8601 ``Z``.
+        created_at:          Envelope timestamp, caller-supplied ISO-8601 ``Z``
+                             (append-only discipline; do NOT call ``utcnow()``
+                             inside this helper — injectable for tests).
+        input_tokens:        Input token count (→ ``gen_ai.usage.input_tokens``).
+        output_tokens:       Output token count (→ ``gen_ai.usage.output_tokens``).
+        cached_input_tokens: Cache-read input token count
+                             (→ ``gen_ai.usage.cached_input_tokens``); 0 ⇒ nothing
+                             served from cache. Drives the ``cached`` flag.
+        status:              Span outcome ∈ ``SPAN_STATUSES`` (``ok`` / ``error``).
+        run_id:              Optional run correlation identifier.
+
+    Returns:
+        A dict conforming to the ``span`` shape ready for ``EventStore.append``.
+    """
+    event: dict[str, Any] = {
+        "event_type": "span",
+        "ticket_id": ticket_id,
+        "trace_id": ticket_id,
+        "span_id": span_id,
+        "parent_span_id": parent_span_id,
+        "kind": kind,
+        "gen_ai.agent.name": agent_name,
+        "gen_ai.request.model": model,
+        "start": start,
+        "end": end,
+        "duration_ms": _duration_ms(start, end),
+        "gen_ai.usage.input_tokens": input_tokens,
+        "gen_ai.usage.output_tokens": output_tokens,
+        "gen_ai.usage.cached_input_tokens": cached_input_tokens,
+        "cached": cached_input_tokens > 0,
+        "status": status,
+        "created_at": created_at,
+    }
+    if run_id is not None:
+        event["run_id"] = run_id
+    return event
+
+
+def validate_span(event: dict[str, Any]) -> list[str]:
+    """Return validation errors for a ``span`` event (Shape H — ADR 0024).
+
+    Checks the envelope first (envelope-first pattern), then the span-specific
+    invariants from ADR 0024 §1 / implementation notes:
+    - ``event_type`` pinned to ``"span"``.
+    - ``trace_id`` is a non-empty string equal to ``ticket_id`` (ADR 0024 §1).
+    - ``span_id`` is a non-empty string.
+    - ``parent_span_id`` is ``None`` (root) or a non-empty string.
+    - ``kind`` ∈ ``SPAN_KINDS``; ``status`` ∈ ``SPAN_STATUSES``.
+    - ``gen_ai.agent.name`` / ``gen_ai.request.model`` are non-empty strings.
+    - ``start`` / ``end`` are non-empty strings; ``duration_ms`` is a
+      non-negative int equal to the derived ``end - start`` when both parse.
+    - token counts are non-negative ints; ``cached`` is a bool consistent with
+      ``cached_input_tokens > 0``.
+
+    Never raises — returns ``[]`` for a well-formed span.
+    """
+    errors = validate_envelope(event)
+    if event.get("event_type") not in (None, "span"):
+        errors.append(f"event_type must be 'span'; got {event.get('event_type')!r}")
+
+    # trace_id == ticket_id (a run is traced under its ticket — ADR 0024 §1).
+    trace_id = event.get("trace_id")
+    if not trace_id or not isinstance(trace_id, str):
+        errors.append("trace_id must be a non-empty string (= ticket_id)")
+    else:
+        ticket_id = event.get("ticket_id")
+        if ticket_id is not None and trace_id != ticket_id:
+            errors.append(
+                f"trace_id must equal ticket_id; got {trace_id!r} != {ticket_id!r}"
+            )
+
+    span_id = event.get("span_id")
+    if not span_id or not isinstance(span_id, str):
+        errors.append("span_id must be a non-empty string")
+
+    # parent_span_id: None ⇒ root; otherwise a non-empty string.
+    if "parent_span_id" in event:
+        psid = event["parent_span_id"]
+        if psid is not None and (not isinstance(psid, str) or not psid):
+            errors.append("parent_span_id must be None (root) or a non-empty string")
+
+    kind = event.get("kind")
+    if kind is not None and kind not in SPAN_KINDS:
+        errors.append(f"kind must be one of {sorted(SPAN_KINDS)}; got {kind!r}")
+
+    status = event.get("status")
+    if status is not None and status not in SPAN_STATUSES:
+        errors.append(f"status must be one of {sorted(SPAN_STATUSES)}; got {status!r}")
+
+    for attr in ("gen_ai.agent.name", "gen_ai.request.model"):
+        v = event.get(attr)
+        if v is not None and (not isinstance(v, str) or not v):
+            errors.append(f"{attr!r} must be a non-empty string")
+
+    for tfield in ("start", "end"):
+        v = event.get(tfield)
+        if v is not None and (not isinstance(v, str) or not v):
+            errors.append(f"{tfield!r} must be a non-empty ISO-8601 string")
+
+    # duration_ms: non-negative int, and == derived (end - start) when parseable.
+    duration = event.get("duration_ms")
+    if duration is not None and (
+        isinstance(duration, bool) or not isinstance(duration, int) or duration < 0
+    ):
+        errors.append(f"duration_ms must be a non-negative integer; got {duration!r}")
+    else:
+        start, end = event.get("start"), event.get("end")
+        if isinstance(start, str) and start and isinstance(end, str) and end:
+            try:
+                derived = _duration_ms(start, end)
+            except ValueError:
+                pass
+            else:
+                if duration is not None and duration != derived:
+                    errors.append(
+                        f"duration_ms must equal end - start ({derived} ms); got {duration!r}"
+                    )
+
+    for tok in ("gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens"):
+        v = event.get(tok)
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 0):
+            errors.append(f"{tok!r} must be a non-negative integer; got {v!r}")
+
+    cit = event.get("gen_ai.usage.cached_input_tokens")
+    if cit is not None and (isinstance(cit, bool) or not isinstance(cit, int) or cit < 0):
+        errors.append(
+            f"'gen_ai.usage.cached_input_tokens' must be a non-negative integer; got {cit!r}"
+        )
+
+    # cached: bool, consistent with cached_input_tokens > 0 (ADR 0024 §1).
+    cached = event.get("cached")
+    if cached is not None and not isinstance(cached, bool):
+        errors.append(f"cached must be a boolean; got {cached!r}")
+    elif (
+        isinstance(cached, bool)
+        and isinstance(cit, int)
+        and not isinstance(cit, bool)
+        and cached != (cit > 0)
+    ):
+        errors.append(
+            f"cached must equal (cached_input_tokens > 0); got cached={cached!r}, "
+            f"cached_input_tokens={cit!r}"
+        )
+
+    return errors
 
 
 # ---------------------------------------------------------------------------
