@@ -511,6 +511,7 @@ class TestShadowClean:
             for p in scripts_dir.rglob("*.py")
             if "dgox" not in p.parts  # exclude scripts/dgox/*.py themselves
             and "cache" not in p.parts  # exclude scripts/cache/*.py (observability consumer)
+            and "cost" not in p.parts   # exclude scripts/cost/*.py (cost-ledger reader, DAS-1459)
             and p.name not in _EVENT_PRODUCERS  # ORGANISM WS1/WS3 event producers (ADR-0023)
             and p.name not in _SPAN_VALIDATORS   # DAS-1456 span validators (use validate_span)
         ]

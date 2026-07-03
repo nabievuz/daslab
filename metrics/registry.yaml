@@ -3,7 +3,7 @@
 # Wired to: board/.events.jsonl (DGO-X event store) + scripts/wave_kpi.py
 # Every metric MUST have a validator in scripts/. No tuning without these.
 version: 1
-updated: 2026-06-21
+updated: 2026-07-03
 
 metrics:
   T1_busy_fraction:
@@ -84,3 +84,19 @@ metrics:
 anti_gaming:
   rule: "T1..T6 numerator counts a unit ONLY if it ends in merged PR + green CI + T7 pass"
   validator: scripts/check_metric_gaming.py
+
+# ---------------------------------------------------------------------------
+# Informational metrics  (not hard gates — per ORGANISM §9 default #6)
+# Ships as a reader first; promote to a hard gate after >= 1 wave-week of
+# clean live data AND a pricing re-verification.
+# ---------------------------------------------------------------------------
+informational_metrics:
+  C1_cost_per_run:
+    definition: "Estimated USD token cost aggregated by ticket / agent / tier / run (INFORMATIONAL)"
+    formula: "sum((input_tokens * input_$/1M + cached_input_tokens * cached_$/1M + output_tokens * output_$/1M) / 1_000_000) over span events; grouped four ways: ticket_id, gen_ai.agent.name, gen_ai.request.model, run_id"
+    source: "DGO-X span events (board/.events.jsonl: event_type=span, OTel GenAI token-usage attrs); prices from config/budgets.yaml"
+    window: "per-run informational view (no rolling window until promoted to T-gate)"
+    target: "INFORMATIONAL — no hard threshold; advisory caps in config/budgets.yaml"
+    guardrail: "INFORMATIONAL ONLY — not a blocking gate; pricing drifts; re-verify prices before promotion (ORGANISM §9 default #6)"
+    owner: cost
+    validator: scripts/check_cost.py
