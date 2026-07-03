@@ -14,7 +14,7 @@ asserts three invariants (ADR 0006 §CI enforcement):
     (b) Version-bump gate: if the byte content of the stable-prefix region
         differs from the stored baseline hash, the script fails unless a
         ``CACHE_PREFIX_VERSION`` marker has been bumped in the skill file.
-    (c) Minimum-length check: the stable-prefix region must be at least 1024
+    (c) Minimum-length check: the stable-prefix region must be at least 4096
         tokens long (Opus 4.8 minimum cacheable prefix).  Token count is
         approximated as ``len(text) / 4`` (conservative GPT-family estimate;
         sufficient for a length gate).
@@ -80,7 +80,10 @@ _DEFAULT_SKILL = ROOT / ".claude" / "skills" / "daslab-cycle" / "SKILL.md"
 _DEFAULT_BASELINE = ROOT / "scripts" / ".cache_prefix_baseline"
 
 # Minimum stable-prefix length in tokens (Opus 4.8 requirement).
-_MIN_TOKENS = 1024
+# Source: claude-api skill shared/prompt-caching.md, "Minimum cacheable prefix" table —
+# Opus 4.8, Opus 4.7, Opus 4.6, Opus 4.5, Haiku 4.5 → 4096 tokens.
+# (1024 was the Sonnet-4.5-era value and under-enforced on Opus 4.8 — fixed DAS-1450.)
+_MIN_TOKENS = 4096
 
 # Characters-per-token ratio (conservative estimate; 4 chars ≈ 1 token).
 _DEFAULT_TOKENS_PER_CHAR = 0.25

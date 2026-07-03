@@ -118,6 +118,8 @@ _VALID_EVENT_TYPES = frozenset(
         "run_start",
         "run_end",
         "tool_unavailable",
+        # result-cache observability (ORGANISM P6 — DAS-1450):
+        "cache_hit",
     }
 )
 
@@ -375,6 +377,47 @@ def validate_agent_invocation(event: dict[str, Any]) -> list[str]:
     ):
         errors.append("allowed_tools must be a list of strings")
     return errors
+
+
+# ---------------------------------------------------------------------------
+# Shape C — cache_hit (ORGANISM P6 — DAS-1450)
+# ---------------------------------------------------------------------------
+
+
+def build_cache_hit(
+    *,
+    ticket_id: str,
+    cache_key: str,
+    created_at: str,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a ``cache_hit`` event dict (Shape C — ORGANISM P6 / DAS-1450).
+
+    Emitted by the result-cache module when a dispatch is short-circuited by a
+    content-addressed cache hit.  The ``cached`` field is always ``True`` so
+    consumers can filter events by type or field without inspecting other shapes.
+
+    Args:
+        ticket_id:   DAS-NNNN ticket identifier for the dispatch that hit.
+        cache_key:   Hex SHA-256 of ``prompt + sorted(input_digests)`` — the
+                     key that resolved to a valid (non-expired) cache entry.
+        created_at:  ISO-8601 UTC timestamp string (caller-supplied; injectable
+                     for tests — do NOT call ``utcnow()`` inside this helper).
+        run_id:      Optional run correlation identifier.
+
+    Returns:
+        A dict conforming to the ``cache_hit`` shape ready for ``EventStore.append``.
+    """
+    event: dict[str, Any] = {
+        "event_type": "cache_hit",
+        "ticket_id": ticket_id,
+        "cache_key": cache_key,
+        "cached": True,
+        "created_at": created_at,
+    }
+    if run_id is not None:
+        event["run_id"] = run_id
+    return event
 
 
 # ---------------------------------------------------------------------------
