@@ -1,7 +1,7 @@
 ---
 id: DAS-1456
 title: wave_kpi + T-validators recompute from spans (single read_events source)
-status: in_review
+status: done
 assignee: backend-em
 author: ceo
 dept: engineering
@@ -129,3 +129,6 @@ reconciliation is inert (no `token_total` on `run_end` events today).
 
 **Full suite**: 1007 passed / 0 failed / 1 skipped; `diagnostics.py` 100/100;
 `board_lint.py` 0 violations; `ruff check scripts tests` clean.
+
+### 2026-07-03 — Orchestrator (/daslab-cycle collect)
+Done via local-only done-gate: full suite 1020 pass + validators green + merge verification. Confirmed T1-T7 use single wave_kpi.read_events reader; added check_spans.py (coverage/validity/reconciliation, inert-by-design) + 14 tests.

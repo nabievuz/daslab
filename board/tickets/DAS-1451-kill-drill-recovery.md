@@ -1,7 +1,7 @@
 ---
 id: DAS-1451
 title: Kill-drill in check_recovery + fork-drill (T5 gate)
-status: in_review
+status: done
 assignee: cto
 author: ceo
 dept: engineering
@@ -170,3 +170,6 @@ failed · `diagnostics.py` → 100/100 · `board_lint.py` → 0 · `check_recove
 (ADR-0010 C3 / ADR-0011 Phase-1 — events becoming load-bearing for operator-invoked
 recovery) now has a third participant (`kill_drill.py` in `_EVENT_PRODUCERS`); the
 recommended follow-up ADR remains open and is worth a tracked ticket.
+
+### 2026-07-03 — Orchestrator (/daslab-cycle collect)
+Done via local-only done-gate: full suite 1020 pass + validators green + merge verification. kill_drill.py: real SIGKILL mid-wave-2 + resume via resume_fork; 20 kill-drills+1 fork-drill -> check_recovery ratio 1.000>=0.99, corrupted 0, zero-lost/zero-dup per-ticket; fork divergence proven. CI smoke + scheduled expensive tier.
