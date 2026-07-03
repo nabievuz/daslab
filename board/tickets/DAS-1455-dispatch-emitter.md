@@ -1,7 +1,7 @@
 ---
 id: DAS-1455
 title: Dispatch emitter — the missing producer (run_start/run_end/span per dispatch)
-status: in_review
+status: done
 assignee: cto
 author: ceo
 dept: engineering
@@ -128,3 +128,6 @@ Built the missing DGO-X event PRODUCER — `scripts/dispatch_emitter.py` (NEW, s
 **Shadow-clean.** Added `"dispatch_emitter.py"` to `_EVENT_PRODUCERS` in `tests/test_dgox_phase1_shadow.py` (precedent: pulse_checkpoint.py) — it is a write-only PRODUCER, never reads events to route.
 
 **Verify (full suite):** pytest 960 passed / 1 skipped; diagnostics 100/100; board_lint 0; `ruff check scripts tests` clean. Committed local-only on `feat/das-1455-dispatch-emitter`. → `status: in_review`, assignee `cto` (never review own work). No push/PR (local-only per orchestrator).
+
+### 2026-07-03 — Orchestrator (/daslab-cycle collect)
+Done via local-only done-gate: full suite 993 pass + validators green + merge verification. dispatch_emitter.py: build_dispatch_events -> [run_start,run_end,span]; run_end carries exact metrics_lib fields; synthetic wave makes check_busy_fraction(T1)/concurrency(T3)/model_mix(T4) compute REAL numbers (false-green fixed). Added to _EVENT_PRODUCERS.

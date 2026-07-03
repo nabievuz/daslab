@@ -1,7 +1,7 @@
 ---
 id: DAS-1445
 title: Resume + time-travel fork in daslab-cycle (P2)
-status: in_review
+status: done
 assignee: backend-em
 author: ceo
 dept: engineering
@@ -153,3 +153,6 @@ Implemented `--resume` and `--fork` recovery affordances. Commit `cfd19cb` on br
 **Full-suite result:** 978 passed, 1 skipped, 0 failed. diagnostics 100/100. board_lint 0. check_cache_prefix OK. ruff clean.
 
 **Shadow-rule ADR recommendation:** YES — a formal ADR supersession (ADR-0010 C3 / ADR-0011 Phase-1) is needed. The `--resume` path makes `board/.events.jsonl` genuinely load-bearing for dispatch decisions (not advisory). The Phase-1 "flag-on == flag-off dispatch" guarantee holds for all normal waves but is intentionally broken for the explicit operator-invoked recovery path. The existing comment in `test_dgox_phase1_shadow.py` already flags this supersession as needed; DAS-1445 adds the first concrete evidence that it must be done. Orchestrator should create a follow-up ADR ticket.
+
+### 2026-07-03 — Orchestrator (/daslab-cycle collect)
+Done via local-only done-gate: full suite 993 pass + validators green + merge verification. resume_fork.py: --resume (replay to last checkpoint, re-dispatch only unfinished, T5 corrupted-chain guard) + --fork (divergent run, original immutable). Reader via replay_qa (no dgox import). Recommends shadow-rule ADR (tracked as DAS-1457). 4 guards preserved.
