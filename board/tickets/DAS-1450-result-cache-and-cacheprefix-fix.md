@@ -1,8 +1,8 @@
 ---
 id: DAS-1450
 title: Result-cache (P6) + fix check_cache_prefix _MIN_TOKENS threshold
-status: todo
-assignee: backend-eng-1
+status: in_review
+assignee: backend-em
 author: ceo
 dept: engineering
 priority: p1
@@ -121,3 +121,33 @@ leave the ADR-0006 re-target for its own ticket.
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — Backend Engineer 1
+Implemented both deliverables on branch `feat/das-1450-result-cache` (commit f853a19, LOCAL — not pushed; worktree /Users/owner/DasLab/.claude/worktrees/DAS-1450).
+
+**(a) Result-cache (ORGANISM P6):**
+- Created `scripts/cache/__init__.py` and `scripts/cache/result_cache.py`.
+- `ResultCache` class: `get(prompt, input_digests, *, ticket_id, run_id)` → `dict|None`; `put(prompt, input_digests, result, *, ttl_seconds=86400)`.
+- Cache key = `sha256(prompt + "".join(sorted(input_digests)))`.
+- Store = `board/.cache/<sha256>.json` with `{key, result, written_at, ttl_seconds}` schema.
+- Expiry: `(now - written_at).total_seconds() > ttl_seconds` → miss.
+- Hit logging: `build_cache_hit` event via `EventStore` when `ticket_id` is provided; logging is best-effort (never breaks the dispatch path).
+- Added `board/.cache/` to `.gitignore`.
+- 20 unit tests in `tests/test_result_cache.py` covering write→hit, TTL-expiry→miss, corrupt file→miss, event logging, schema, key determinism/order-independence.
+
+**(b) `_MIN_TOKENS` fix:**
+- Source verified: `claude-api` skill `shared/prompt-caching.md` — Opus 4.8, 4.7, 4.6, 4.5 and Haiku 4.5 → **4096 tokens** minimum cacheable prefix. (1024 was Sonnet-4.5-era, under-enforced on Opus 4.8.)
+- Changed `_MIN_TOKENS = 1024` → `_MIN_TOKENS = 4096` with citation comment in `scripts/check_cache_prefix.py:83`.
+- Updated docstring (line 17) from "1024" to "4096".
+- `python3 scripts/check_cache_prefix.py` exits 0: stable prefix measures ~5250 tokens, well above the corrected 4096 threshold.
+- Updated boundary tests in `tests/test_check_cache_prefix.py` (boundary body now 16384 chars = 4096 tokens; `_LONG_CLEAN_PREFIX` now 16528 chars).
+
+**Supporting changes:**
+- `scripts/dgox/events.py`: added `"cache_hit"` to `_VALID_EVENT_TYPES`; added `build_cache_hit()` builder.
+- `tests/test_dgox_phase1_shadow.py`: excluded `scripts/cache/` from dispatch-decision dgox-import scan (the cache module is an observability consumer of dgox, not a decision script — same rationale as the existing `scripts/dgox/` exclusion).
+
+**Verification gates (all green):**
+- `python3 scripts/diagnostics.py` → 100/100
+- `python3 scripts/board_lint.py` → 0 errors (17 tickets)
+- `python3 scripts/check_cache_prefix.py` → exit 0 (~5250 tokens ≥ 4096)
+- `pytest` → 743 passed, 1 skipped, 0 failed
