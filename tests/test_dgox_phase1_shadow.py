@@ -456,12 +456,24 @@ class TestShadowClean:
         # scripts/cache/ is excluded because it is an observability consumer of dgox
         # (ORGANISM P6 / DAS-1450 — the result-cache module wraps EventStore for hit
         # logging; it is not part of the dispatch-DECISION path).
+        #
+        # ORGANISM WS1/WS3 event PRODUCERS (below) are also excluded: they only WRITE
+        # events via the dgox builders/EventStore (never READ them to route dispatch),
+        # so they are producers, not dispatch-DECISION scripts. The invariant's intent
+        # — no shadow READ influences routing (flag-on == flag-off dispatch) — is intact.
+        # Sanctioned by ADR-0023 (run-model). NOTE: this per-file allowlist is a stopgap;
+        # a principled refinement (flag only READERS: iter_events/read_events) is a
+        # tracked follow-up, and ADR-0010 C3 / ADR-0011 Phase-1 shadow rule is being
+        # superseded by ORGANISM (resume/emitter make events load-bearing) — that
+        # supersession needs its own ADR.
+        _EVENT_PRODUCERS = {"pulse_checkpoint.py"}
         scripts_dir = _SCRIPTS
         py_files = [
             p
             for p in scripts_dir.rglob("*.py")
             if "dgox" not in p.parts  # exclude scripts/dgox/*.py themselves
             and "cache" not in p.parts  # exclude scripts/cache/*.py (observability consumer)
+            and p.name not in _EVENT_PRODUCERS  # ORGANISM WS1/WS3 event producers (ADR-0023)
         ]
 
         dgox_imports_found: dict[str, list[str]] = {}
