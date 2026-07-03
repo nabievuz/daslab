@@ -1,5 +1,5 @@
 {
-  "stable_prefix_sha256": "9de5d0b916903b6daa9dee2f7fd2c5f4aeaa505fdec2bba32bcab08f089a0c2f",
-  "cache_prefix_version": "v10-adr-renumber",
+  "stable_prefix_sha256": "35924d8d958ac2a4c0c5a9ee4653bfe6cf7fa6cc95c5f720ac4016f9c00b7269",
+  "cache_prefix_version": "v11-fanout-deferred",
   "note": "Written by check_cache_prefix.py --fix.  Commit this file together with any stable-prefix changes."
 }
