@@ -1,6 +1,6 @@
 # ADR 0024 — Span-event schema (OTel GenAI semantic-convention attribute names)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-07-03
 
 ## Context

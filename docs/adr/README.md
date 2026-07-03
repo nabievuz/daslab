@@ -30,7 +30,7 @@ edit in place. New ADRs take the next free number.
 | [0021](0021-fail-closed-ruff-gate.md) | The lint gate is fail-closed — an absent `ruff` fails the Code-quality dimension; an unmeasured lint never scores 100 | Accepted | 2026-06-27 |
 | [0022](0022-semantic-versioning-policy.md) | Semantic versioning & release policy — `VERSION` + `CHANGELOG.md` + annotated tags / GitHub Releases; the release gate enforces VERSION/CHANGELOG | Accepted | 2026-06-29 |
 | [0023](0023-run-model.md) | Run-model — `run_id`=ULID, `board/runs/<run_id>/` (manifest + per-wave delta checkpoints), gitignored except the retained summary; reuses the existing `routing_decision`/`recovery_drill` event contract so replay/recovery score unchanged | Accepted | 2026-07-03 |
-| [0024](0024-span-event-schema.md) | Span-event schema — append-only `span` event (`trace_id`=ticket id, `span_id`/`parent_span_id` tree, `kind` ∈ {invoke_agent, chat, execute_tool, wave, run}, agent/model, timing, token+cache accounting, `status`) using OTel GenAI semantic-convention attribute names so a real OTel exporter is a trivial adapter; extends the ADR 0011 event store, reconciles `graph_state.trace_ids` as a derived pointer-mirror | Proposed | 2026-07-03 |
+| [0024](0024-span-event-schema.md) | Span-event schema — append-only `span` event (`trace_id`=ticket id, `span_id`/`parent_span_id` tree, `kind` ∈ {invoke_agent, chat, execute_tool, wave, run}, agent/model, timing, token+cache accounting, `status`) using OTel GenAI semantic-convention attribute names so a real OTel exporter is a trivial adapter; extends the ADR 0011 event store, reconciles `graph_state.trace_ids` as a derived pointer-mirror | Accepted | 2026-07-03 |
 
 ## Themes
 
