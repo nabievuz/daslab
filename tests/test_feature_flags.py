@@ -13,20 +13,32 @@ if str(SCRIPTS) not in sys.path:
 import feature_flags as ff  # noqa: E402  (import after path manipulation)
 
 
-def test_real_config_has_both_flags_off():
+def test_real_config_has_all_flags_off():
     flags = ff.load()
-    assert flags == {"dgox_emit": False, "t4_t7_governors": False}
+    assert flags == {
+        "dgox_emit": False,
+        "t4_t7_governors": False,
+        "organism_emit": False,
+    }
 
 
 def test_enabled_reads_a_true_flag(tmp_path):
     p = tmp_path / "features.yaml"
-    p.write_text("dgox_emit: true\nt4_t7_governors: false\n", encoding="utf-8")
+    p.write_text(
+        "dgox_emit: true\nt4_t7_governors: false\norganism_emit: true\n",
+        encoding="utf-8",
+    )
     assert ff.enabled("dgox_emit", p) is True
     assert ff.enabled("t4_t7_governors", p) is False
+    assert ff.enabled("organism_emit", p) is True
 
 
 def test_missing_file_falls_back_off(tmp_path):
-    assert ff.load(tmp_path / "nope.yaml") == {"dgox_emit": False, "t4_t7_governors": False}
+    assert ff.load(tmp_path / "nope.yaml") == {
+        "dgox_emit": False,
+        "t4_t7_governors": False,
+        "organism_emit": False,
+    }
 
 
 def test_unknown_keys_are_ignored(tmp_path):
@@ -39,4 +51,8 @@ def test_unknown_keys_are_ignored(tmp_path):
 def test_empty_file_falls_back_off(tmp_path):
     p = tmp_path / "f.yaml"
     p.write_text("", encoding="utf-8")
-    assert ff.load(p) == {"dgox_emit": False, "t4_t7_governors": False}
+    assert ff.load(p) == {
+        "dgox_emit": False,
+        "t4_t7_governors": False,
+        "organism_emit": False,
+    }

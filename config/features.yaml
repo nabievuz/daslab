@@ -8,3 +8,4 @@
 
 dgox_emit: false        # /daslab-cycle step 5d routing_decision shadow emission (ADR-0011 Phase-1, no Phase-2 consumer yet)
 t4_t7_governors: false  # T4 cost/model-mix + T7 quality governor invocations during a wave
+organism_emit: false    # /daslab-cycle ORGANISM WS1 "pulse" run-model: run-open + wave checkpoints (pulse_checkpoint) + run_start/run_end/span emission (dispatch_emitter) at steps 0/5/6; SEPARATE channel from dgox_emit; post-decision, failure-isolated (flag-on == flag-off dispatch)
