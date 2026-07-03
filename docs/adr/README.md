@@ -29,6 +29,7 @@ edit in place. New ADRs take the next free number.
 | [0020](0020-gate-promotion-no-false-green.md) | Gate promotion — warn→enforce only with data discipline; unmeasured is SKIPPED, not green | Accepted | 2026-06-27 |
 | [0021](0021-fail-closed-ruff-gate.md) | The lint gate is fail-closed — an absent `ruff` fails the Code-quality dimension; an unmeasured lint never scores 100 | Accepted | 2026-06-27 |
 | [0022](0022-semantic-versioning-policy.md) | Semantic versioning & release policy — `VERSION` + `CHANGELOG.md` + annotated tags / GitHub Releases; the release gate enforces VERSION/CHANGELOG | Accepted | 2026-06-29 |
+| [0023](0023-run-model.md) | Run-model — `run_id`=ULID, `board/runs/<run_id>/` (manifest + per-wave delta checkpoints), gitignored except the retained summary; reuses the existing `routing_decision`/`recovery_drill` event contract so replay/recovery score unchanged | Accepted | 2026-07-03 |
 
 ## Themes
 
@@ -51,3 +52,10 @@ edit in place. New ADRs take the next free number.
   scorer, the role-overlay contract, latent-machine feature flags,
   data-disciplined gate promotion (no false green), a fail-closed lint gate, and
   the semantic-versioning & release policy.
+- **Durable execution — ORGANISM WS1 PULSE ([0023](0023-run-model.md)–).**
+  The run-model: a ULID `run_id`, a `board/runs/<run_id>/` artifact tree (wave-plan
+  manifest + per-wave delta checkpoints with board-hash, event offset, ledger-hash
+  chain and pending interrupts), gitignored runtime state except a retained
+  human-readable summary. It extends — never forks — the ADR 0011 event store,
+  reusing the `routing_decision` + `recovery_drill` contract and the reserved
+  `run_start`/`run_end` types so the replay/recovery scorers keep working unchanged.

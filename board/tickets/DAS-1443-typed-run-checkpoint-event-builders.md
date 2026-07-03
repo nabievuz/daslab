@@ -1,0 +1,124 @@
+---
+id: DAS-1443
+title: Typed run_start/run_end/wave/checkpoint builders + validators in dgox/events.py
+status: todo
+assignee: backend-em
+author: ceo
+dept: engineering
+priority: p1
+parent: DAS-1440
+goal: organism-ws1-pulse
+depends_on: [DAS-1442]
+zone: scripts/dgox
+created: 2026-07-03
+updated: 2026-07-03
+---
+
+## Description
+
+**What.** Add four typed event builders and their validators to the DGO-X
+append-only event store, `scripts/dgox/events.py`:
+
+- `build_run_start` / `validate_run_start`
+- `build_run_end` / `validate_run_end`
+- `build_wave` / `validate_wave`
+- `build_checkpoint` / `validate_checkpoint`
+
+and register any of these `event_type` strings that are not already in the
+module's `_VALID_EVENT_TYPES` frozenset.
+
+**Why.** This is the WS1-Pulse (ORGANISM program) work that gives the event
+store first-class, self-validating shapes for the run lifecycle. Today the
+store only ships two load-bearing typed shapes — `routing_decision` (Shape A)
+and `agent_invocation` (Shape B) — while the downstream metrics layer,
+`scripts/metrics_lib.py`, already reads `run_start` / `run_end` events by hand
+(see `run_intervals`, `model_mix`, `gaming_violations`, `t1b_high_impact`).
+Without typed builders, those `run_end` events are hand-assembled at every call
+site, so a single mis-spelled or missing field silently breaks T3 concurrency,
+T4 model-mix, R-9 anti-gaming, and T1b high-impact. Typed builders + a
+conformance test make the producer/consumer contract explicit and enforced.
+
+**Extend-vs-new posture: EXTEND `scripts/dgox/events.py` in place.** Do NOT
+create a new module. Follow the two existing shapes exactly — same file, same
+section-comment structure (`# ---- Shape … ----`), same `build_*` /
+`validate_*` naming, same keyword-only signatures, same "envelope-first"
+validation pattern (each `validate_*` calls `validate_envelope(event)` first and
+appends shape-specific errors). Mirror the docstring density of the existing
+builders.
+
+**Load-bearing contract with `scripts/metrics_lib.py` (read it before coding).**
+`run_end` MUST carry the exact field names the metrics layer already reads —
+renaming any of these silently zeros out a KPI:
+
+- `run_id` — join key; `run_intervals` pairs `run_start`/`run_end` by it, and
+  `model_mix` de-dups per unit via `_unit_key` (`run_id` or `ticket_id`).
+- `created_at` — parsed by `_parse_iso` (`"%Y-%m-%dT%H:%M:%SZ"`) for T3 intervals.
+- `outcome` — `_is_successful_completion` lower-cases it; success vocabulary is
+  `SUCCESS_OUTCOMES = {"success","ok","passed","done"}`; empty counts as success.
+- `model` — `model_mix` lower-cases it and tests membership in
+  `LOW_COST_MODELS = {"haiku"}`.
+- `merged_pr` — `gaming_violations` requires it truthy (R-9 "no merged PR").
+- `ci_status` — must be in `GREEN_CI = {"green","pass","passed","success"}`.
+- `t7_pass` — `_is_true_flag` truthiness (a string `"false"`/`"no"`/`"0"` fails).
+- `t7_score` — `t1b_high_impact` compares `float(t7_score) >= 0.90`.
+
+`run_end` is treated as a completion event by `_is_completion_event`
+(`event_type == "run_end"`), so all of the above evidence fields ride on it.
+
+**Determinism / append-only discipline (from the module header + ADR 0011).**
+`created_at` stays a **caller-supplied argument** — never call `utcnow()` inside
+a pure builder/validator (callers pass a timestamp so helpers stay deterministic
+and unit-testable). The store is **append-only, never rewritten**: a correction
+is a new *compensating* event, never an in-place edit of a prior line. Do not
+add any code path that mutates or rewrites existing events.
+
+**Key existing files this ticket touches / depends on:**
+
+- `scripts/dgox/events.py` — the module to extend (builders, validators,
+  `_VALID_EVENT_TYPES`). Note `run_start` and `run_end` are ALREADY listed in
+  `_VALID_EVENT_TYPES` (as reserved types); `wave` and `checkpoint` are NOT —
+  add the missing ones only.
+- `scripts/metrics_lib.py` — the downstream consumer that fixes the `run_end`
+  field contract (read-only reference; do not modify in this ticket).
+- `tests/test_dgox_events.py` — the pytest suite to extend with mirrored tests.
+
+## Acceptance criteria
+
+- [ ] Typed builders + validators exist in `scripts/dgox/events.py` for all four
+      types: `build_run_start`/`validate_run_start`,
+      `build_run_end`/`validate_run_end`, `build_wave`/`validate_wave`,
+      `build_checkpoint`/`validate_checkpoint`.
+- [ ] Each `validate_*` calls `validate_envelope` first (envelope-first pattern),
+      then appends shape-specific errors, and pins the correct `event_type`
+      (mirrors `validate_routing_decision` / `validate_agent_invocation`).
+- [ ] `build_run_end` emits ALL of the exact field names `scripts/metrics_lib.py`
+      reads: `run_id`, `created_at`, `outcome`, `model`, `merged_pr`,
+      `ci_status`, `t7_pass`, `t7_score` (plus `event_type` and `ticket_id`).
+- [ ] Field names match `metrics_lib` exactly — a **conformance test** is added
+      that asserts a `build_run_end(...)` event satisfies the metrics readers
+      (e.g. it flows through `model_mix` / `gaming_violations` /
+      `t1b_high_impact` / `run_intervals` and is counted, not silently dropped),
+      so any future rename breaks a test.
+- [ ] `created_at` remains a required caller-supplied argument on every new
+      builder; no new builder/validator calls `utcnow()` internally.
+- [ ] `_VALID_EVENT_TYPES` includes `run_start`, `run_end`, `wave`, `checkpoint`
+      (add `wave`/`checkpoint`; `run_start`/`run_end` already present).
+- [ ] Unit tests mirroring `tests/test_dgox_events.py` are added for each new
+      shape: build-produces-expected-shape, mutation-copy safety where a
+      collection/dict arg is used, valid-event-no-errors, wrong-event-type error,
+      and at least one missing/invalid-field error per shape.
+- [ ] No in-place event rewrites: builders return fresh dicts; corrections are
+      modeled as new compensating events (no mutation path added to the store).
+- [ ] `pytest tests/test_dgox_events.py` is green (and the full suite is not
+      regressed).
+
+## Log
+
+### 2026-07-03 — CEO
+Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record:
+docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+AADL stage: GATE-2/3.
+Consumes: adr-0023.
+Produces: typed-run-events (consumed by DAS-1444 / DAS-1451 / DAS-1454 /
+DAS-1455 / DAS-1456).
