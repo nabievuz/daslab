@@ -1,8 +1,8 @@
 ---
 id: DAS-1456
 title: wave_kpi + T-validators recompute from spans (single read_events source)
-status: todo
-assignee: backend-eng-1
+status: in_review
+assignee: backend-em
 author: ceo
 dept: engineering
 priority: p1
@@ -12,6 +12,7 @@ depends_on: [DAS-1454, DAS-1455]
 zone: scripts/metrics
 created: 2026-07-03
 updated: 2026-07-03
+branch: feat/das-1456-recompute-spans
 ---
 
 ## Description
@@ -75,17 +76,17 @@ fields are absent — never fabricate a number.
 
 ## Acceptance criteria
 
-- [ ] `wave_kpi.py` (T1) and the `metrics_lib.py` T2–T7 validators all derive
+- [x] `wave_kpi.py` (T1) and the `metrics_lib.py` T2–T7 validators all derive
       from spans via the single shared `wave_kpi.read_events` source — no reader
       keeps a private/divergent run reconstruction.
-- [ ] New `scripts/check_spans.py` asserts 100% of dispatches in a run produce
+- [x] New `scripts/check_spans.py` asserts 100% of dispatches in a run produce
       well-formed spans (matching paired `run_start`/`run_end` by `run_id` with
       required fields); exits non-zero on any missing/malformed dispatch when
       live events exist.
-- [ ] Token sums (once present) reconcile with span sums; the reconciliation
+- [x] Token sums (once present) reconcile with span sums; the reconciliation
       passes inertly when token/cost fields are absent (cost-ledger is slice-2).
-- [ ] `python3 scripts/diagnostics.py` stays 100/100.
-- [ ] All validators (`wave_kpi`, `metrics_lib`, `check_spans`) remain
+- [x] `python3 scripts/diagnostics.py` stays 100/100.
+- [x] All validators (`wave_kpi`, `metrics_lib`, `check_spans`) remain
       inert-by-design — return `None`/exit 0 with a clear "no events" message —
       when the event store is absent or empty.
 
@@ -93,3 +94,38 @@ fields are absent — never fabricate a number.
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — Backend Engineer 1
+
+GATE-3 implementation complete. Branch `feat/das-1456-recompute-spans`, commit bf4e736.
+
+**Single-reader audit**: Confirmed all T1–T7 check scripts already call `wave_kpi.read_events`
+as the one JSONL reader before passing events to `metrics_lib` functions. No private divergent
+reader existed; the single-reader invariant was intact and is now explicitly documented.
+
+**New file — `scripts/check_spans.py`**:
+- Reads events via `wave_kpi.read_events` (single source of truth).
+- Check 1 (coverage): every `run_start` run_id has a matching `span` event.
+- Check 2 (validity): every `span` passes `dgox.events.validate_span` — all required
+  OTel-GenAI fields, `trace_id == ticket_id`, `duration_ms == end - start`, `cached`
+  consistent with `cached_input_tokens`.
+- Check 3 (reconciliation seam): where `run_end.token_total` is present, verifies
+  it equals sum of span `input_tokens + output_tokens` for that `run_id`. Currently
+  inert (no `token_total` on `run_end` until slice-2 cost-ledger).
+- Inert (exit 0, "no events") on absent/empty store.
+- Shadow-test exclusion: `tests/test_dgox_phase1_shadow.py` updated to include
+  `check_spans.py` in `_SPAN_VALIDATORS` (span validator using `validate_span`, not
+  a dispatch-decision script — Phase-1 shadow rule intent preserved).
+
+**New file — `tests/test_check_spans.py`**: 14 tests covering inert paths, full
+coverage, partial missing span (exit 1), malformed span (exit 1), duration mismatch
+(exit 1), cached flag inconsistency (exit 1), token reconciliation (inert + matching
+pass + mismatch fail), and single-reader invariant.
+
+**Reconciliation proof**: synthetic 3-dispatch wave emitted via `dispatch_emitter.emit_wave`
+produces 9 events (`[run_start, run_end, span] × 3`); `check_spans.py` reports
+"3 dispatch(es), 3 span(s) — all well-formed, coverage 100%", exit 0. Token
+reconciliation is inert (no `token_total` on `run_end` events today).
+
+**Full suite**: 1007 passed / 0 failed / 1 skipped; `diagnostics.py` 100/100;
+`board_lint.py` 0 violations; `ruff check scripts tests` clean.
