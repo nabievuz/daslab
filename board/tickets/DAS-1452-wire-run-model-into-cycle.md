@@ -1,7 +1,7 @@
 ---
 id: DAS-1452
 title: Wire run-model + dispatch emitter into daslab-cycle (preserve 4 guards)
-status: in_review
+status: done
 assignee: chairman
 author: ceo
 dept: engineering
@@ -182,3 +182,49 @@ orchestrator. Not self-approving: status → in_review, assignee → chairman fo
 deployment-gate review (CTO's reviewer is CEO, but CEO is the author →
 escalate one level to Chairman per ROUTING.md; aligns with the GATE-5 directive).
 Local-only: committed on branch `feat/das-1452-wire-cycle`, no push/PR.
+
+### 2026-07-03 — Chairman of the Board
+**GATE-5 (Deployment) sign-off — PASS.** Reviewed the merged change (commit
+`6b1ee0e`, local main): `.claude/skills/daslab-cycle/SKILL.md`,
+`scripts/feature_flags.py`, `config/features.yaml`, `scripts/.cache_prefix_baseline`,
+`tests/test_feature_flags.py`. Never-auto-approve deployment gate: a human (this
+Chairman review) is the required approver; not self-approved (CTO author's chain
+escalated CEO→Chairman since CEO is the ticket author).
+
+Deployment-safety items verified:
+1. **Emission dark by default** — `organism_emit` defaults **False** in both
+   `scripts/feature_flags.py` DEFAULTS and `config/features.yaml` (latent-machine
+   law ADR-0019). It is a SEPARATE channel from `dgox_emit`; the `dgox_emit` value
+   is unchanged (`False`) — its `+` diff line is only the DEFAULTS dict being
+   reformatted single-line→multi-line, not a value change. `dgox_emit` semantics
+   untouched.
+2. **4 selection guards preserved verbatim** — step 3 (zone correctness,
+   `depends_on` gate, AADL gate order, clarify gate + circuit-breaker) is
+   byte-for-byte unchanged: no diff hunk lands in the step-3 line range (hunks hit
+   only steps 0/4/5f/6/7 + the CACHE_PREFIX_VERSION line); a grep for
+   zone/depends_on/AADL/clarify among added lines finds only the new step-0/5f
+   prose, no guard edits.
+3. **No background timer/daemon** — the only timer/daemon/loop tokens introduced
+   are NEGATIONS affirming the "one operator invocation = one wave, no background
+   timer" contract; the run opens in step 0 and CLOSES in step 6 within the same
+   wave. No driver/loop added.
+4. **QONUN-5 / loop safety** — `python3 scripts/check_loop_mode.py` exit 0
+   (loop.yaml untouched: mode 'shadow', auto_apply false, levers only).
+5. **Post-decision / observational / failure-isolated** — every run-model call
+   (ULID mint, checkpoint, completion, emit) is wrapped; a failed append never
+   blocks dispatch. Flag-on == flag-off dispatch DECISIONS; only difference is
+   lines in gitignored `board/.events.jsonl` + artifacts under `board/runs/<run_id>/`.
+
+Validators (local main, this review):
+- `scripts/diagnostics.py` → **100/100**
+- `scripts/board_lint.py` → **0 violations** (17 tickets)
+- `scripts/check_cache_prefix.py` → **exit 0** (v14-organism-runmodel; ~8450
+  prefix tokens; no volatile tokens; hash stable)
+- `scripts/check_never_auto_approve.py` → **clean** (17 tickets)
+- `scripts/check_loop_mode.py` → **exit 0**
+- `python3 -m pytest -q` → **1020 passed, 1 skipped, 0 failed**
+
+**Verdict: PASS → done.** Local-only "done" = green validators + this GATE-5
+review; no push/PR. `organism_emit` STAYS OFF until a Founder governance
+flag-flip authorizes turning the run-model machinery on (latent until a consumer
++ explicit enablement).
