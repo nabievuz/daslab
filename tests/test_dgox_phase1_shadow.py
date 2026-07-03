@@ -487,6 +487,18 @@ class TestShadowClean:
         #   recovery" vs "events are advisory-only for normal dispatch".  The orchestrator
         #   should create a follow-up ADR ticket (see DAS-1445 log).
         _EVENT_PRODUCERS = {"pulse_checkpoint.py", "dispatch_emitter.py"}
+        #
+        # DAS-1456 — check_spans.py (event VALIDATOR, NOT a dispatch-decision script):
+        #   check_spans.py reads the event store via wave_kpi.read_events (not via
+        #   dgox.iter_events) and calls dgox.events.validate_span to assert well-
+        #   formedness of span events.  It is a post-wave observability validator;
+        #   it never influences routing decisions (no ticket is dispatched or blocked
+        #   based on its output in the normal /daslab-cycle path).  The dgox import
+        #   is needed only for the validate_span shape-checker, not for reading the
+        #   event store.  Excluding it here preserves the intent of the Phase-1 shadow
+        #   rule ("flag-on == flag-off dispatch") while allowing span validation tooling
+        #   to reuse the canonical validators from dgox.events.
+        _SPAN_VALIDATORS = {"check_spans.py"}
         scripts_dir = _SCRIPTS
         py_files = [
             p
@@ -494,6 +506,7 @@ class TestShadowClean:
             if "dgox" not in p.parts  # exclude scripts/dgox/*.py themselves
             and "cache" not in p.parts  # exclude scripts/cache/*.py (observability consumer)
             and p.name not in _EVENT_PRODUCERS  # ORGANISM WS1/WS3 event producers (ADR-0023)
+            and p.name not in _SPAN_VALIDATORS   # DAS-1456 span validators (use validate_span)
         ]
 
         dgox_imports_found: dict[str, list[str]] = {}
