@@ -1,7 +1,7 @@
 ---
 id: DAS-1443
 title: Typed run_start/run_end/wave/checkpoint builders + validators in dgox/events.py
-status: in_review
+status: done
 assignee: cto
 author: ceo
 dept: engineering
@@ -166,3 +166,6 @@ full suite `python3 -m pytest -q` = 763 passed, 1 skipped (no regression);
 Committed LOCAL-ONLY to `feat/das-1443-typed-event-builders` (no push, no PR per
 ORGANISM LOCAL-ONLY git strategy). Status → in_review; routed to CTO (manager)
 for GATE-3 review — I authored this, so I do not review it.
+
+### 2026-07-03 — Orchestrator (/daslab-cycle collect)
+Done via local-only done-gate: green diagnostics(100/100)/board_lint/pytest(810) + combined-merge verification (pure-code review collapsed into orchestrator+validator verification per local-only strategy). Typed run_start/run_end/wave/checkpoint builders; run_end matches metrics_lib exactly (conformance test). Merged to local main; combined suite 810 pass.
