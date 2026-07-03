@@ -1,8 +1,8 @@
 ---
 id: DAS-1445
 title: Resume + time-travel fork in daslab-cycle (P2)
-status: todo
-assignee: backend-eng-2
+status: in_review
+assignee: backend-em
 author: ceo
 dept: engineering
 priority: p1
@@ -130,3 +130,26 @@ capability consumed downstream by DAS-1451 and DAS-1452.
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — Backend Engineer 2
+
+Implemented `--resume` and `--fork` recovery affordances. Commit `cfd19cb` on branch `feat/das-1445-resume-fork`.
+
+**Files changed:**
+- `scripts/resume_fork.py` (new) — core module: `get_unfinished_tickets`, `resume_run`, `fork_run`, `parse_fork_arg`. Reads events via `wave_kpi.read_events` + `replay_qa.group_runs`/`replay_run` (canonical contract). No direct `dgox.*` imports; `pulse_checkpoint` lazy-imported inside functions for completion records, ULID minting, and checkpoint reconstruction.
+- `tests/test_resume_fork.py` (new) — 33 round-trip tests covering: unfinished detection, terminal status exclusion (done/blocked), T5 corrupted-chain ValueError, completion-record exclusion, fork divergence, original-events immutability, parse_fork_arg, and replay_qa contract-reuse proofs.
+- `tests/test_dgox_phase1_shadow.py` (modified) — added comment block near `_EVENT_PRODUCERS` documenting that `resume_fork.py` is a conceptual event-READER (not in `_EVENT_PRODUCERS` because it doesn't import dgox directly) and that ADR supersession is recommended.
+- `.claude/skills/daslab-cycle/SKILL.md` (modified) — added `## Recovery affordances` section AFTER `## Boundaries` (well after the CACHE_PREFIX_VERSION sentinel at line ~522 and after the `## Prompt-cache prefix layout` sentinel). No stable-prefix bytes changed; `check_cache_prefix.py` confirms hash stable.
+
+**Acceptance criteria:**
+- [x] `--resume <run_id>` replays to last valid checkpoint; re-dispatches only unfinished.
+- [x] Resume refuses on corrupted chain (ValueError / T5 guardrail).
+- [x] `--fork <run_id>@wave-NNN` produces divergent new run; original events byte-for-byte intact.
+- [x] Replay reuses `replay_qa.group_runs` + `replay_qa.replay_run` (not re-implemented).
+- [x] Round-trip tests: dispatch→completion→resume (no duplicate dispatch) + fork divergence.
+- [x] 4 selection guards and pure-id worktree path preserved (documented in SKILL.md resume section; guards noted as still applying to re-dispatch set).
+- [x] Cache-prefix: no edits before `## Prompt-cache prefix layout` sentinel; `check_cache_prefix.py` exits 0, hash unchanged.
+
+**Full-suite result:** 978 passed, 1 skipped, 0 failed. diagnostics 100/100. board_lint 0. check_cache_prefix OK. ruff clean.
+
+**Shadow-rule ADR recommendation:** YES — a formal ADR supersession (ADR-0010 C3 / ADR-0011 Phase-1) is needed. The `--resume` path makes `board/.events.jsonl` genuinely load-bearing for dispatch decisions (not advisory). The Phase-1 "flag-on == flag-off dispatch" guarantee holds for all normal waves but is intentionally broken for the explicit operator-invoked recovery path. The existing comment in `test_dgox_phase1_shadow.py` already flags this supersession as needed; DAS-1445 adds the first concrete evidence that it must be done. Orchestrator should create a follow-up ADR ticket.
