@@ -41,11 +41,16 @@ def _fm_field(text: str, key: str) -> str | None:
     return None
 
 
-def _load(board_dir: Path) -> tuple[dict[str, list[str]], dict[str, str | None], dict[str, str]]:
-    """Return (deps_by_id, zone_by_id, file_by_id)."""
+def _load(board_dir: Path) -> tuple[dict[str, list[str]], dict[str, str | None], dict[str, str], dict[str, bool]]:
+    """Return (deps_by_id, zone_by_id, file_by_id, defer_by_id).
+
+    ``defer_by_id`` maps ticket id → True when the ticket carries ``defer: true``
+    (the deferred-synthesis marker introduced by the P5 fanout primitive).
+    """
     deps: dict[str, list[str]] = {}
     zones: dict[str, str | None] = {}
     files: dict[str, str] = {}
+    defers: dict[str, bool] = {}
     for md in sorted(board_dir.glob("DAS-*.md")):
         text = md.read_text(encoding="utf-8", errors="ignore")
         tid = (_fm_field(text, "id") or md.name.split("-t.md")[0]).strip()
@@ -53,8 +58,10 @@ def _load(board_dir: Path) -> tuple[dict[str, list[str]], dict[str, str | None],
         deps[tid] = DAS_RE.findall(dep_raw) if dep_raw else []
         zone_raw = _fm_field(text, "zone")
         zones[tid] = None if zone_raw is None else zone_raw.strip().strip('"').strip("'")
+        defer_raw = _fm_field(text, "defer")
+        defers[tid] = (defer_raw or "").lower().strip() == "true"
         files[tid] = md.name
-    return deps, zones, files
+    return deps, zones, files, defers
 
 
 def _find_cycle(deps: dict[str, list[str]]) -> list[str] | None:
@@ -87,7 +94,7 @@ def _find_cycle(deps: dict[str, list[str]]) -> list[str] | None:
 
 
 def scan(board_dir: Path) -> list[tuple[str, str]]:
-    deps, zones, files = _load(board_dir)
+    deps, zones, files, defers = _load(board_dir)
     all_ids = set(deps)
     violations: list[tuple[str, str]] = []
 
@@ -99,6 +106,17 @@ def scan(board_dir: Path) -> list[tuple[str, str]]:
     for tid, zone in zones.items():
         if zone is not None and zone == "":
             violations.append((files[tid], "zone: is present but empty"))
+
+    # Fanout invariant: a defer: true ticket MUST declare at least one dep.
+    # A deferred synthesis ticket with empty depends_on can never become
+    # actionable (the dep-blocked skip has nothing to wait on), which is a
+    # silent defect.  Fail-fast here so the planner catches it at emit time.
+    for tid, is_deferred in defers.items():
+        if is_deferred and not deps.get(tid, []):
+            violations.append(
+                (files[tid], "defer: true but depends_on is empty — "
+                 "deferred ticket can never become actionable")
+            )
 
     cycle = _find_cycle(deps)
     if cycle:

@@ -1,8 +1,8 @@
 ---
 id: DAS-1449
 title: Fanout-tickets + deferred synthesis gating (P5)
-status: todo
-assignee: backend-eng-2
+status: in_review
+assignee: backend-em
 author: ceo
 dept: engineering
 priority: p1
@@ -107,3 +107,15 @@ never in a project folder.
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — Backend Engineer 2
+Implemented P5 fanout-tickets + deferred-synthesis gating. All acceptance criteria met.
+
+**What was built:**
+- `scripts/fanout.py` — `emit_fanout()` materialises N child tickets + 1 synthesis ticket at runtime.  Each child carries a private `## Fanout Payload` section (isolated per file).  The synthesis ticket is written with `defer: true` and `depends_on: [child1, ..., childN]`.  `is_actionable()` implements the dispatcher gating logic (dep-blocked skip + defer hard guard) as a reusable helper.
+- `scripts/check_dependency_graph.py` — extended `_load()` to also parse the `defer:` field; added a new `scan()` rule that rejects `defer: true` tickets with empty `depends_on` (would never become actionable).
+- `.claude/skills/daslab-cycle/SKILL.md` — Step 3: added the Fanout deferred-synthesis guard paragraph (defer: true hard guard on top of dep-blocked skip).  Step 5: added sub-item 5e documenting fanout emission (N children + 1 deferred synthesis, validation, dispatch rules, payload-isolation contract).  Bumped `CACHE_PREFIX_VERSION` from `v10-adr-renumber` to `v11-fanout-deferred` and ran `check_cache_prefix.py --fix` (baseline regenerated).
+- `board/README.md` — added `defer:` row to the optional governance fields table; added `## Fanout Payload` body-convention section documenting the private-payload isolation contract.
+- `tests/test_fanout_deferred.py` — 23 tests: emission shape, payload isolation, runtime N, dispatcher gating (dep-blocked while child open, actionable once all done), defer hard guard, check_dependency_graph validation, SKILL.md token guards.
+
+**Validators:** diagnostics 100/100, board_lint 0, check_cache_prefix exit 0, check_dependency_graph clean, 746 pytest passed / 1 skipped.

@@ -85,6 +85,16 @@ the selection step — keep those.
    causes merge conflicts and rework, which *lowers* throughput. A ticket whose
    `depends_on:` names an id that is not yet `done` is NOT actionable — skip it
    and count it `dep-blocked` (like the AADL gate-order skip).
+   **Fanout deferred-synthesis guard:** A ticket carrying `defer: true` is a
+   **deferred synthesis ticket** emitted by the fanout primitive (see step 5e).
+   It is NEVER dispatched early — `defer: true` is a **hard guard** independent
+   of (and in addition to) the `depends_on` dep-blocked skip above.  Even if a
+   race condition would otherwise make the ticket appear actionable, re-check
+   every id in `depends_on` explicitly: if any is not `done`, refuse dispatch
+   and count it `dep-blocked`.  A deferred ticket becomes actionable only when
+   every id in its `depends_on` list is `done` AND no race has bypassed the
+   dep-blocked check — the double-check is mandatory because the synthesis
+   ticket's correctness depends critically on all children having completed.
    **AADL gate order** (`governance/policies/ai-agent-lifecycle.md`): a ticket
    whose parent is a `Stage N` epic is NOT actionable while the same project's
    `Stage N-1` epic is not `done` — skip it and count it as gate-blocked in
@@ -297,6 +307,39 @@ the selection step — keep those.
       emission success or failure. This is the single-writer enforcement:
       only the orchestrator emits routing_decision events, never subagents.
 
+   e. **Fanout emission — map/reduce shape (P5, ORGANISM pulse loop).**
+      When a dispatched ticket carries a `fanout:` directive in its body, or
+      when the orchestrator computes N work slices at runtime for a variable-
+      width task, materialise the fanout cluster **before** spawning any
+      subagent.  Do this in order:
+
+      1. **Determine N at runtime** — the number of work slices.  N is never
+         hard-coded; it is computed from the ticket body or from the
+         orchestrator's own analysis.
+      2. **Call `scripts/fanout.emit_fanout()`** to materialise:
+         - **N child tickets** — each carries its own private
+           `## Fanout Payload` section (marked with an HTML comment).
+           No sibling ticket can read another child's payload; isolation is
+           enforced by the file-per-ticket model.  The child ticket body
+           also receives a `body_intro` referencing its parent.
+         - **1 synthesis ticket** — marked `defer: true`, declares
+           `depends_on: [child1, ..., childN]`, and references only child ids
+           in its body (never raw sibling payloads).
+      3. **Validate the cluster** — run `python3 scripts/check_dependency_graph.py`
+         against the board after emission.  No dangling deps, acyclic graph,
+         well-formed `zone:` on every ticket.  Abort the wave with a blocker
+         report if the validator fails.
+      4. **Dispatch children only** — the N child tickets are dispatched in
+         this wave as normal (step 5a–d above).  The synthesis ticket is NOT
+         dispatched: its `defer: true` marker and the dep-blocked skip in
+         step 3 jointly hold it back until every child is `done`.
+      5. **Private-payload isolation contract** — the synthesis agent must NOT
+         read sibling child ticket files directly.  Results a child wants to
+         publish for the synthesis step must be written to an explicit shared
+         artifact (board field, output file, or published log entry).  The
+         synthesis agent consumes those published results, not the private
+         `## Fanout Payload` sections.
+
 6. **Collect & verify.** After all return: re-read each dispatched ticket —
    confirm `status`/`updated`/log actually changed (a subagent that returned
    text but didn't edit the file gets its result written into the log by YOU,
@@ -421,7 +464,7 @@ It fails the build if:
 Run standalone: `python3 scripts/check_cache_prefix.py`
 CI: wired into the `validate` job in `.github/workflows/ci.yml`.
 
-CACHE_PREFIX_VERSION: v10-adr-renumber
+CACHE_PREFIX_VERSION: v11-fanout-deferred
 
 ## Boundaries
 

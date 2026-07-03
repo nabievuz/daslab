@@ -64,6 +64,30 @@ classify a ticket against `config/risk_taxonomy.yaml` (QONUN-5). They are additi
 | `spec` / `implements` | `001-onboarding` / `[FR-001, SC-002]` | bind a child ticket to its per-epic `SPEC.md` and the `FR-NNN`/`SC-NNN` it implements; `scripts/check_spec_consistency.py` rejects dangling refs (ADR-0015). Optional, size-gated. |
 | `depends_on` | `[DAS-1376]` | ticket ids that must be `done` before this is actionable; `scripts/check_dependency_graph.py` enforces acyclic + no-dangling (ADR-0016). |
 | `zone` | `apps/web` | the repo area this ticket mutates; two same-`zone` tickets must not run in one wave — the `/daslab-cycle` correctness guard reads this instead of inferring (ADR-0016). |
+| `defer` | `true` | **Deferred synthesis marker** — emitted only by the P5 fanout primitive (`scripts/fanout.py`).  A `defer: true` ticket is NEVER dispatched until every id in its `depends_on` list is `done`.  The `/daslab-cycle` dispatcher applies a hard guard independent of (and in addition to) the standard `depends_on` dep-blocked skip (SKILL.md step 3).  Only the fanout planner should emit this field; set it manually only when creating a synthesis ticket by hand.  A `defer: true` ticket with empty `depends_on` is a validator error (`scripts/check_dependency_graph.py` fails). |
+
+### Fanout body convention — `## Fanout Payload` (private per-child section)
+
+When `scripts/fanout.emit_fanout()` materialises a child ticket, it appends a
+`## Fanout Payload` section to the ticket body.  This section is the **private
+work slice** for that child only:
+
+```markdown
+## Fanout Payload
+
+<!-- PRIVATE: this payload is scoped to this ticket only.
+     Sibling tickets must NOT read this block. Results intended
+     for the synthesis step must be published explicitly. -->
+
+<per-child payload text here>
+```
+
+**Isolation contract:** no sibling ticket (and not the synthesis ticket) may
+read another child's `## Fanout Payload` section directly.  The synthesis agent
+consumes only results that a child has **explicitly published** (e.g. written to
+a shared board field or an output file).  The file-per-ticket model enforces
+this at the filesystem layer: each child ticket is a separate file; the
+synthesis ticket's `depends_on` list contains only child ids, never their bodies.
 
 A ticket in a never-auto-approve category (`new_goal`, `security_sensitive`,
 `schema_migration`, `gate5_deployment`, `governance_or_policy`, `permission_change`,
