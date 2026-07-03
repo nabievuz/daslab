@@ -117,6 +117,8 @@ _VALID_EVENT_TYPES = frozenset(
         "tool_call",
         "run_start",
         "run_end",
+        "wave",
+        "checkpoint",
         "tool_unavailable",
     }
 )
@@ -374,6 +376,423 @@ def validate_agent_invocation(event: dict[str, Any]) -> list[str]:
         not isinstance(at, list) or not all(isinstance(s, str) for s in at)
     ):
         errors.append("allowed_tools must be a list of strings")
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Shape C — run_start (ADR 0023 §1/§4 — run lifecycle boundary)
+# ---------------------------------------------------------------------------
+
+_RUN_START_REQUIRED = frozenset(
+    {
+        "event_type",
+        "ticket_id",
+        "run_id",
+        "goal",
+        "engine_version",
+        "created_at",
+    }
+)
+
+
+def build_run_start(
+    *,
+    ticket_id: str,
+    run_id: str,
+    goal: str,
+    engine_version: str,
+    created_at: str,
+) -> dict[str, Any]:
+    """Build a ``run_start`` event dict (Shape C — ADR 0023 §1/§4).
+
+    Marks the opening boundary of a run (one supervised execution of the org
+    across one or more waves). ``run_intervals`` in ``scripts/metrics_lib.py``
+    pairs this with the matching ``run_end`` by ``run_id`` (T3 concurrency), so
+    ``run_id`` and ``created_at`` are load-bearing.
+
+    Args:
+        ticket_id:      DAS-NNNN identifier anchoring the run (envelope law —
+                        every stored event is ticket-scoped; for a run this is
+                        the run's anchor/first ticket, matching ``run_end``).
+        run_id:         ULID run identifier — the single join key across the
+                        event store, run-artifact tree, ticket log, and recovery
+                        drill (ADR 0023 §1; unchanged from ADR 0011).
+        goal:           Goal slug this run advances (mirrors ``manifest.json``).
+        engine_version: Engine ``VERSION`` string at run start (mirrors
+                        ``manifest.json.engine_version``).
+        created_at:     ISO-8601 UTC timestamp string (caller-supplied — injectable
+                        for tests; do NOT call ``utcnow()`` inside this helper).
+
+    Returns:
+        A dict conforming to the ``run_start`` shape ready for ``EventStore.append``.
+    """
+    return {
+        "event_type": "run_start",
+        "ticket_id": ticket_id,
+        "run_id": run_id,
+        "goal": goal,
+        "engine_version": engine_version,
+        "created_at": created_at,
+    }
+
+
+def validate_run_start(event: dict[str, Any]) -> list[str]:
+    """Return validation errors for a ``run_start`` event.
+
+    Checks the envelope first (envelope-first pattern), then shape-specific
+    constraints:
+    - ``event_type`` pinned to ``"run_start"``.
+    - ``run_id`` is required (non-empty string) — it is the run join key.
+    - ``goal`` and ``engine_version`` are non-empty strings.
+    """
+    errors = validate_envelope(event)
+    if event.get("event_type") not in (None, "run_start"):
+        errors.append(
+            f"event_type must be 'run_start'; got {event.get('event_type')!r}"
+        )
+    run_id = event.get("run_id")
+    if not run_id or not isinstance(run_id, str):
+        errors.append("run_id is required for run_start and must be a non-empty string")
+    for str_field in ("goal", "engine_version"):
+        v = event.get(str_field)
+        if v is None or not isinstance(v, str) or not v:
+            errors.append(f"{str_field!r} must be a non-empty string")
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Shape D — run_end (ADR 0023 §4 — LOAD-BEARING metrics_lib.py contract)
+# ---------------------------------------------------------------------------
+#
+# ``run_end`` is the completion event (`_is_completion_event`) that the entire
+# T-gate + anti-gaming layer in ``scripts/metrics_lib.py`` reads. The field
+# names below are a HARD CONTRACT — renaming any of them silently zeroes out a
+# KPI (ADR 0023 §4). Consumed by:
+#   run_id      -> run_intervals (T3 pairing), _unit_key (T4 de-dup)
+#   created_at  -> _parse_iso    (T3 interval endpoints)
+#   outcome     -> _is_successful_completion (SUCCESS_OUTCOMES)
+#   model       -> model_mix     (T4 low-cost share; LOW_COST_MODELS)
+#   merged_pr   -> gaming_violations (R-9 "no merged PR")
+#   ci_status   -> gaming_violations (GREEN_CI)
+#   t7_pass     -> gaming_violations / t1b_high_impact (_is_true_flag)
+#   t7_score    -> t1b_high_impact  (float(t7_score) >= 0.90)
+#
+# The single source of truth for that consumed field set, asserted by the
+# schema-conformance test in tests/test_dgox_events.py:
+RUN_END_METRICS_FIELDS = frozenset(
+    {
+        "run_id",
+        "created_at",
+        "outcome",
+        "model",
+        "merged_pr",
+        "ci_status",
+        "t7_pass",
+        "t7_score",
+    }
+)
+
+_RUN_END_REQUIRED = frozenset({"event_type", "ticket_id"}) | RUN_END_METRICS_FIELDS
+
+
+def build_run_end(
+    *,
+    ticket_id: str,
+    run_id: str,
+    outcome: str,
+    model: str,
+    merged_pr: Any,
+    ci_status: str,
+    t7_pass: Any,
+    t7_score: float,
+    created_at: str,
+) -> dict[str, Any]:
+    """Build a ``run_end`` event dict (Shape D — ADR 0023 §4).
+
+    This is the load-bearing completion event for the metrics layer. Every
+    field name here MUST match ``scripts/metrics_lib.py`` exactly (see the
+    module comment above and ``RUN_END_METRICS_FIELDS``); a rename silently
+    breaks T3/T4, R-9 anti-gaming, and T1b high-impact.
+
+    Args:
+        ticket_id:  DAS-NNNN identifier of the completed unit (read by
+                    ``gaming_violations`` and ``_unit_key`` T4 de-dup fallback).
+        run_id:     ULID run join key — pairs with ``run_start`` in
+                    ``run_intervals`` and de-dups the completion unit in ``model_mix``.
+        outcome:    Run outcome; counts as success when in
+                    ``SUCCESS_OUTCOMES = {"success","ok","passed","done"}``
+                    (empty also counts) — anything else is NOT a success.
+        model:      Explicit model name (LAW 3 / ADR 0007). ``model_mix``
+                    lower-cases it and tests membership in ``LOW_COST_MODELS``.
+        merged_pr:  Merged-PR evidence (R-9). Must be truthy for the completion
+                    to count — a PR ref/URL string or ``True``.
+        ci_status:  CI status; green ⇒ ``GREEN_CI = {"green","pass","passed","success"}``.
+        t7_pass:    T7 pass flag; ``_is_true_flag`` truthiness (the string
+                    ``"false"``/``"no"``/``"0"`` does NOT pass).
+        t7_score:   T7 impact score; ``t1b_high_impact`` compares
+                    ``float(t7_score) >= 0.90``.
+        created_at: ISO-8601 UTC timestamp string (caller-supplied — injectable
+                    for tests; do NOT call ``utcnow()`` inside this helper).
+
+    Returns:
+        A dict conforming to the ``run_end`` shape ready for ``EventStore.append``.
+    """
+    return {
+        "event_type": "run_end",
+        "ticket_id": ticket_id,
+        "run_id": run_id,
+        "outcome": outcome,
+        "model": model,
+        "merged_pr": merged_pr,
+        "ci_status": ci_status,
+        "t7_pass": t7_pass,
+        "t7_score": t7_score,
+        "created_at": created_at,
+    }
+
+
+def validate_run_end(event: dict[str, Any]) -> list[str]:
+    """Return validation errors for a ``run_end`` event.
+
+    Checks the envelope first (envelope-first pattern), then the load-bearing
+    metrics contract:
+    - ``event_type`` pinned to ``"run_end"``.
+    - ``run_id`` is required (non-empty string) — the metrics join key.
+    - every ``RUN_END_METRICS_FIELDS`` member is present (a missing one silently
+      zeroes a KPI — flag it loudly here).
+    - ``outcome``, ``model``, ``ci_status`` are non-empty strings.
+    - ``t7_score`` is coercible to ``float`` (``t1b_high_impact`` calls ``float(...)``).
+    """
+    errors = validate_envelope(event)
+    if event.get("event_type") not in (None, "run_end"):
+        errors.append(
+            f"event_type must be 'run_end'; got {event.get('event_type')!r}"
+        )
+    run_id = event.get("run_id")
+    if not run_id or not isinstance(run_id, str):
+        errors.append("run_id is required for run_end and must be a non-empty string")
+    # The metrics contract: every consumed field must be present, else a KPI
+    # silently zeroes (ADR 0023 §4). created_at/run_id already handled above.
+    for field in ("outcome", "model", "merged_pr", "ci_status", "t7_pass", "t7_score"):
+        if field not in event:
+            errors.append(f"missing metrics-contract field: {field!r} (run_end)")
+    for str_field in ("outcome", "model", "ci_status"):
+        v = event.get(str_field)
+        if v is not None and (not isinstance(v, str) or not v):
+            errors.append(f"{str_field!r} must be a non-empty string")
+    score = event.get("t7_score")
+    if score is not None:
+        try:
+            float(score)
+        except (TypeError, ValueError):
+            errors.append(f"t7_score must be coercible to float; got {score!r}")
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Shape E — wave (ADR 0023 §2 — a wave boundary within a run)
+# ---------------------------------------------------------------------------
+
+_WAVE_REQUIRED = frozenset(
+    {
+        "event_type",
+        "ticket_id",
+        "run_id",
+        "wave",
+        "tickets",
+        "created_at",
+    }
+)
+
+
+def build_wave(
+    *,
+    ticket_id: str,
+    run_id: str,
+    wave: int,
+    tickets: list[str],
+    created_at: str,
+    routing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a ``wave`` event dict (Shape E — ADR 0023 §2 manifest wave).
+
+    Records one wave boundary of a run: the 1-based wave number and the ticket
+    set dispatched in it (mirrors ``manifest.json.waves[]``). ``tickets`` is
+    copied so a caller mutating the source list cannot mutate the event.
+
+    Args:
+        ticket_id:  DAS-NNNN anchor ticket for the run (envelope law).
+        run_id:     ULID run join key.
+        wave:       1-based wave index within the run (positive integer).
+        tickets:    Ticket ids dispatched in this wave (copied defensively).
+        created_at: ISO-8601 UTC timestamp string (caller-supplied — injectable
+                    for tests; do NOT call ``utcnow()`` inside this helper).
+        routing:    Optional per-ticket ``{ticket_id: {role, model}}`` routing
+                    map (mirrors ``manifest.json.waves[].routing``); copied.
+
+    Returns:
+        A dict conforming to the ``wave`` shape ready for ``EventStore.append``.
+    """
+    event: dict[str, Any] = {
+        "event_type": "wave",
+        "ticket_id": ticket_id,
+        "run_id": run_id,
+        "wave": wave,
+        "tickets": list(tickets),
+        "created_at": created_at,
+    }
+    if routing is not None:
+        event["routing"] = dict(routing)
+    return event
+
+
+def validate_wave(event: dict[str, Any]) -> list[str]:
+    """Return validation errors for a ``wave`` event.
+
+    Checks the envelope first (envelope-first pattern), then shape-specific
+    constraints:
+    - ``event_type`` pinned to ``"wave"``.
+    - ``run_id`` is required (non-empty string).
+    - ``wave`` is a positive integer (1-based).
+    - ``tickets`` is a list of non-empty strings.
+    - ``routing``, if present, is a dict.
+    """
+    errors = validate_envelope(event)
+    if event.get("event_type") not in (None, "wave"):
+        errors.append(f"event_type must be 'wave'; got {event.get('event_type')!r}")
+    run_id = event.get("run_id")
+    if not run_id or not isinstance(run_id, str):
+        errors.append("run_id is required for wave and must be a non-empty string")
+    wave = event.get("wave")
+    if wave is not None and (isinstance(wave, bool) or not isinstance(wave, int) or wave < 1):
+        errors.append(f"wave must be a positive (1-based) integer; got {wave!r}")
+    tickets = event.get("tickets")
+    if tickets is not None and (
+        not isinstance(tickets, list) or not all(isinstance(t, str) and t for t in tickets)
+    ):
+        errors.append("tickets must be a list of non-empty strings")
+    routing = event.get("routing")
+    if routing is not None and not isinstance(routing, dict):
+        errors.append("routing must be a dict when present")
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Shape F — checkpoint (ADR 0023 §2/§3 — per-wave resumable checkpoint)
+# ---------------------------------------------------------------------------
+
+_CHECKPOINT_REQUIRED = frozenset(
+    {
+        "event_type",
+        "ticket_id",
+        "run_id",
+        "wave",
+        "board_hash",
+        "event_offset",
+        "ticket_states",
+        "ledger_hashes",
+        "created_at",
+    }
+)
+
+
+def build_checkpoint(
+    *,
+    ticket_id: str,
+    run_id: str,
+    wave: int,
+    board_hash: str,
+    event_offset: int,
+    ticket_states: dict[str, str],
+    ledger_hashes: dict[str, str],
+    created_at: str,
+    pending_interrupts: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build a ``checkpoint`` event dict (Shape F — ADR 0023 §2/§3).
+
+    Records a per-wave resumable checkpoint (mirrors ``wave-NNN.checkpoint.json``):
+    the ``event_offset`` resume point into ``board/.events.jsonl``, the
+    ``board_hash`` tamper check, the ``ticket_states`` DELTA (only tickets whose
+    status changed since the previous checkpoint — ADR 0023 §3), and the
+    ``ledger_hashes`` ``{prev,self}`` hash chain. Dict/list args are copied so a
+    caller mutating a source cannot mutate the stored event (append-only law).
+
+    Args:
+        ticket_id:          DAS-NNNN anchor ticket for the run (envelope law).
+        run_id:             ULID run join key.
+        wave:               1-based wave index this checkpoint closes.
+        board_hash:         Content hash of the board ticket set at the wave
+                            boundary (out-of-band mutation detector).
+        event_offset:       Byte offset into ``board/.events.jsonl`` — the resume
+                            point (non-negative integer).
+        ticket_states:      Per-ticket status DELTA since the previous checkpoint
+                            (``{ticket_id: status}``); copied defensively.
+        ledger_hashes:      ``{prev, self}`` hash chain linking checkpoints; copied.
+        created_at:         ISO-8601 UTC timestamp string (caller-supplied —
+                            injectable for tests; do NOT call ``utcnow()`` here).
+        pending_interrupts: Ticket ids halted awaiting a human interrupt answer
+                            (WS1 interrupt cards); copied. Defaults to ``[]``.
+
+    Returns:
+        A dict conforming to the ``checkpoint`` shape ready for ``EventStore.append``.
+    """
+    return {
+        "event_type": "checkpoint",
+        "ticket_id": ticket_id,
+        "run_id": run_id,
+        "wave": wave,
+        "board_hash": board_hash,
+        "event_offset": event_offset,
+        "ticket_states": dict(ticket_states),
+        "pending_interrupts": list(pending_interrupts) if pending_interrupts is not None else [],
+        "ledger_hashes": dict(ledger_hashes),
+        "created_at": created_at,
+    }
+
+
+def validate_checkpoint(event: dict[str, Any]) -> list[str]:
+    """Return validation errors for a ``checkpoint`` event.
+
+    Checks the envelope first (envelope-first pattern), then shape-specific
+    constraints:
+    - ``event_type`` pinned to ``"checkpoint"``.
+    - ``run_id`` is required (non-empty string).
+    - ``wave`` is a positive integer (1-based).
+    - ``board_hash`` is a non-empty string.
+    - ``event_offset`` is a non-negative integer (byte offset / resume point).
+    - ``ticket_states`` and ``ledger_hashes`` are dicts.
+    - ``ledger_hashes`` carries the ``prev`` and ``self`` chain links.
+    - ``pending_interrupts``, if present, is a list of strings.
+    """
+    errors = validate_envelope(event)
+    if event.get("event_type") not in (None, "checkpoint"):
+        errors.append(
+            f"event_type must be 'checkpoint'; got {event.get('event_type')!r}"
+        )
+    run_id = event.get("run_id")
+    if not run_id or not isinstance(run_id, str):
+        errors.append("run_id is required for checkpoint and must be a non-empty string")
+    wave = event.get("wave")
+    if wave is not None and (isinstance(wave, bool) or not isinstance(wave, int) or wave < 1):
+        errors.append(f"wave must be a positive (1-based) integer; got {wave!r}")
+    board_hash = event.get("board_hash")
+    if board_hash is not None and (not isinstance(board_hash, str) or not board_hash):
+        errors.append("board_hash must be a non-empty string")
+    offset = event.get("event_offset")
+    if offset is not None and (isinstance(offset, bool) or not isinstance(offset, int) or offset < 0):
+        errors.append(f"event_offset must be a non-negative integer; got {offset!r}")
+    for dict_field in ("ticket_states", "ledger_hashes"):
+        v = event.get(dict_field)
+        if v is not None and not isinstance(v, dict):
+            errors.append(f"{dict_field!r} must be a dict")
+    lh = event.get("ledger_hashes")
+    if isinstance(lh, dict):
+        for link in ("prev", "self"):
+            if link not in lh:
+                errors.append(f"ledger_hashes must carry {link!r} (checkpoint hash chain)")
+    pi = event.get("pending_interrupts")
+    if pi is not None and (not isinstance(pi, list) or not all(isinstance(s, str) for s in pi)):
+        errors.append("pending_interrupts must be a list of strings")
     return errors
 
 

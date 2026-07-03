@@ -1,8 +1,8 @@
 ---
 id: DAS-1443
 title: Typed run_start/run_end/wave/checkpoint builders + validators in dgox/events.py
-status: todo
-assignee: backend-em
+status: in_review
+assignee: cto
 author: ceo
 dept: engineering
 priority: p1
@@ -122,3 +122,47 @@ AADL stage: GATE-2/3.
 Consumes: adr-0023.
 Produces: typed-run-events (consumed by DAS-1444 / DAS-1451 / DAS-1454 /
 DAS-1455 / DAS-1456).
+
+### 2026-07-03 — Backend EM
+Implemented the four typed shapes + validators in `scripts/dgox/events.py`
+(EXTENDED in place, no new module), mirroring the existing Shape A/B pattern
+(keyword-only builders, envelope-first validators, caller-supplied `created_at`,
+defensive copies of collection/dict args, fresh dicts — append-only, no mutation
+path):
+
+- Shape C `build_run_start`/`validate_run_start` — `run_id, goal, engine_version`
+  (+ envelope `event_type, ticket_id, created_at`).
+- Shape D `build_run_end`/`validate_run_end` — LOAD-BEARING metrics contract:
+  emits the EXACT names `scripts/metrics_lib.py` reads —
+  `run_id, created_at, outcome, model, merged_pr, ci_status, t7_pass, t7_score`
+  (+ `event_type, ticket_id`). Single source of truth exported as
+  `RUN_END_METRICS_FIELDS`; `validate_run_end` flags any missing contract field
+  and non-float `t7_score`.
+- Shape E `build_wave`/`validate_wave` — `wave (1-based int), tickets (list)`,
+  optional `routing` (mirrors `manifest.json.waves[]`).
+- Shape F `build_checkpoint`/`validate_checkpoint` — `wave, board_hash,
+  event_offset, ticket_states (delta), pending_interrupts, ledger_hashes{prev,self}`
+  (mirrors `wave-NNN.checkpoint.json`, ADR 0023 §2/§3).
+
+Registered `wave` + `checkpoint` in `_VALID_EVENT_TYPES` (`run_start`/`run_end`
+were already reserved).
+
+Tests (`tests/test_dgox_events.py`): added `TestRunStart`, `TestRunEnd`,
+`TestWave`, `TestCheckpoint`, `TestNewShapesRoundTrip`, and a
+`TestRunEndMetricsConformance` **schema-conformance** class asserting a
+`build_run_end(...)` event flows through and is COUNTED by `model_mix` (haiku
+low-cost), `gaming_violations` (full evidence ⇒ no violation; stripped evidence
+⇒ flagged), `t1b_high_impact` (t7_score ≥ 0.90), and `run_intervals`
+(run_start/run_end paired by `run_id`) — so any future field rename breaks a
+test. Each new shape also has build-shape, mutation-copy safety,
+valid-no-errors, wrong-event-type, and missing/invalid-field cases.
+
+VERIFY (all green): `python3 scripts/diagnostics.py` = 100/100;
+`python3 scripts/board_lint.py` = 0 violations (17 tickets);
+`python3 -m pytest tests/test_dgox_events.py -q` = 81 passed;
+full suite `python3 -m pytest -q` = 763 passed, 1 skipped (no regression);
+`ruff check scripts tests` clean.
+
+Committed LOCAL-ONLY to `feat/das-1443-typed-event-builders` (no push, no PR per
+ORGANISM LOCAL-ONLY git strategy). Status → in_review; routed to CTO (manager)
+for GATE-3 review — I authored this, so I do not review it.
