@@ -451,12 +451,17 @@ class TestShadowClean:
         For Python files, we use AST analysis (precise, catches aliases).
         For the SKILL.md, we scan as plain text.
         """
-        # Python files in scripts/ that are NOT inside scripts/dgox/
+        # Python files in scripts/ that are NOT inside scripts/dgox/ or scripts/cache/.
+        # scripts/dgox/ is excluded because it IS the dgox module.
+        # scripts/cache/ is excluded because it is an observability consumer of dgox
+        # (ORGANISM P6 / DAS-1450 — the result-cache module wraps EventStore for hit
+        # logging; it is not part of the dispatch-DECISION path).
         scripts_dir = _SCRIPTS
         py_files = [
             p
             for p in scripts_dir.rglob("*.py")
             if "dgox" not in p.parts  # exclude scripts/dgox/*.py themselves
+            and "cache" not in p.parts  # exclude scripts/cache/*.py (observability consumer)
         ]
 
         dgox_imports_found: dict[str, list[str]] = {}

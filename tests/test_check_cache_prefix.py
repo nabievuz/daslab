@@ -41,8 +41,8 @@ from check_cache_prefix import (  # noqa: E402
 _SENTINEL = _STABLE_PREFIX_END_MARKER
 
 # Build a stable-prefix body that is long enough to pass the min-token gate.
-# At 0.25 tokens/char we need len >= 1024 / 0.25 = 4096 chars.
-_LONG_CLEAN_PREFIX = "# DasLab dispatch preamble\n\n" + ("x" * 4200)
+# At 0.25 tokens/char we need len >= 4096 / 0.25 = 16384 chars.
+_LONG_CLEAN_PREFIX = "# DasLab dispatch preamble\n\n" + ("x" * 16500)
 
 
 def _make_skill(tmp_path: Path, prefix_body: str, version: str = "") -> Path:
@@ -211,8 +211,8 @@ def test_no_stored_hash_bootstraps_and_exits_0(tmp_path: Path) -> None:
 
 
 def test_min_length_check_short_prefix_exits_1(tmp_path: Path) -> None:
-    """A prefix shorter than 1024 tokens must exit 1."""
-    # 100 chars * 0.25 tokens/char = 25 tokens — well below the 1024 minimum.
+    """A prefix shorter than 4096 tokens must exit 1."""
+    # 100 chars * 0.25 tokens/char = 25 tokens — well below the 4096 minimum.
     short_body = "# Short preamble\n" + ("x" * 100)
     skill = _make_skill(tmp_path, short_body, version="v1")
     prefix = extract_stable_prefix(skill.read_text(encoding="utf-8"))
@@ -221,10 +221,10 @@ def test_min_length_check_short_prefix_exits_1(tmp_path: Path) -> None:
 
 
 def test_min_length_check_exact_boundary_passes(tmp_path: Path) -> None:
-    """A prefix of exactly 1024 tokens must pass (boundary inclusive)."""
-    # 1024 tokens at 0.25 tokens/char = 4096 chars.
-    boundary_body = "# Preamble\n" + ("x" * (4096 - len("# Preamble\n")))
-    # Confirm the approximation lands at exactly 1024.
+    """A prefix of exactly 4096 tokens must pass (boundary inclusive)."""
+    # 4096 tokens at 0.25 tokens/char = 16384 chars.
+    boundary_body = "# Preamble\n" + ("x" * (16384 - len("# Preamble\n")))
+    # Confirm the approximation lands at exactly 4096.
     assert approx_tokens(boundary_body, _DEFAULT_TOKENS_PER_CHAR) >= _MIN_TOKENS
     skill = _make_skill(tmp_path, boundary_body, version="v1")
     prefix = extract_stable_prefix(skill.read_text(encoding="utf-8"))

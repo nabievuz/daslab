@@ -29,3 +29,6 @@ board/.arcrift-outbox.jsonl
 
 # DGO-X event store (append-only runtime audit log — ADR 0011, Phase 1)
 board/.events.jsonl
+
+# Result-cache store (content-addressed; TTL-governed wave state — DAS-1450 / ORGANISM P6)
+board/.cache/
