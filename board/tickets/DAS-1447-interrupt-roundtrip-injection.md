@@ -1,8 +1,8 @@
 ---
 id: DAS-1447
 title: Interrupt round-trip — dispatch injection + idempotency guard (P3)
-status: todo
-assignee: backend-eng-1
+status: in_review
+assignee: backend-em
 author: ceo
 dept: engineering
 priority: p1
@@ -111,7 +111,58 @@ new state fields.
 - [ ] Frontmatter carries **no `project:` field** (org-engine work; board_lint
       R9), and `board_lint.py` passes on the board.
 
+## Acceptance criteria
+
+- [x] **Round-trip test:** a create → answer → resume flow is exercised end to
+      end — a ticket enters `interrupted`, a Founder `resume:<value>` is written,
+      and the next wave's dispatch context for that ticket **visibly contains
+      the injected `<value>`** (assert the value appears in the subagent's
+      dynamic-tail prompt / ticket context, not the stable prefix).
+- [x] **Idempotency note in the ticket template:** the ticket skeleton includes
+      an explicit instruction that any pre-interrupt side effect (merge, spend,
+      message send) must be made safe to re-run.
+- [x] **Validator warning:** `scripts/board_lint.py` emits a `WARN` when an
+      interrupted ticket describes a non-idempotent pre-interrupt effect;
+      running it on a clean board still reports OK (exit 0).
+- [x] **No auto-answering of gates:** the `/daslab-cycle` SKILL explicitly
+      states gates are never auto-answered/defaulted/inferred by the
+      orchestrator; a gated ticket stays `interrupted` until a human Founder
+      writes the `resume:` value.
+- [x] **Consumes interrupt-schema (DAS-1446):** the resume marker/fields used
+      are those defined by DAS-1446 — no new parallel state fields are invented.
+- [x] Frontmatter carries **no `project:` field** (org-engine work; board_lint
+      R9), and `board_lint.py` passes on the board.
+
 ## Log
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — Backend Engineer 1
+Implemented the interrupt round-trip. All acceptance criteria met. Details:
+
+**Injection mechanism** (`scripts/interrupt_roundtrip.py`):
+- `parse_resume_marker(body)` — extracts `<value>` from `resume:<value>` in the ticket body (below frontmatter).
+- `find_interrupt_card(ticket_id, interrupts_dir)` — locates the card whose `"ticket"` field matches; returns the lexicographically latest if multiple match.
+- `validate_resume_value(value, card)` — case-sensitive exact match against `card["options"]`.
+- `build_resume_injection(value, card)` — builds the dynamic-tail injection block (slot 3, after ticket body): includes Founder answer, question, options, payload, and idempotency reminder. Strictly after the last `cache_control` breakpoint — never in the stable prefix.
+- `detect_resumed_tickets(board_dir, interrupts_dir)` — orchestrator entry point; returns a `ResumedTicket` list for all valid resumed `interrupted` tickets. Unanswered, invalid-value, or card-missing tickets are skipped (never auto-answered).
+
+**Idempotency guard**:
+- `warn_interrupted_idempotency()` added to `scripts/board_lint.py` — emits `WARN` (not `FAIL`) for `interrupted` tickets whose body contains unguarded side-effect verbs (merge, charge, send, notify, post, dispatch) without a guard phrase. Exit code unchanged — 0 on a clean board.
+- Idempotency HTML comment added to the `## Description` skeleton in `board/README.md`.
+
+**SKILL.md** (`.claude/skills/daslab-cycle/SKILL.md`):
+- Step 3: added "Interrupted-resume detection" subsection — runs before normal priority selection; parks unanswered tickets; validates value; transitions `interrupted → in_progress`; records resume context for injection.
+- Step 5c: added "Resume context injection" note — injection goes in dynamic tail slot 3, never in stable prefix.
+- Bumped `CACHE_PREFIX_VERSION: v11-fanout-deferred → v12-interrupt-roundtrip`.
+- Ran `python3 scripts/check_cache_prefix.py --fix` to update baseline.
+
+**Tests** (`tests/test_interrupt_roundtrip.py`, 23 tests):
+- `test_roundtrip_full` — the AC1 end-to-end test: create → answer → injected-value-visible.
+- Parked (unanswered), invalid-value, and missing-card cases all reject dispatch.
+- Idempotency warning: emitted for unguarded side effects, suppressed when guarded, absent on clean board.
+
+**Validators**: `diagnostics.py` 100/100, `board_lint.py` 0 violations, `check_cache_prefix.py` exit 0, 48 tests pass (23 new + 25 existing `test_board_lint`).
+
+Branch: `feat/das-1447-interrupt-roundtrip`. Setting `status: in_review`, routing to `backend-em`.

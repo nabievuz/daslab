@@ -74,8 +74,41 @@ the selection step — keep those.
    - Skip tickets whose title/description matches external blocks
      (RAHMAT / UZINFOCOM / IKPU / tax / legal entity) — leave them, count them.
 
-3. **Select every actionable ticket** (or the first `N` if args set a bound),
-   priority order: `p0` first, then `in_review` (unblock the pipeline), then
+3. **Select every actionable ticket** (or the first `N` if args set a bound).
+
+   **Interrupted-resume detection (run first, before normal priority selection):**
+   Scan every ticket with `status: interrupted`. For each:
+   1. Read the full ticket file and look for a line matching `resume:<value>`
+      **anywhere in the body** (below the frontmatter — not in a frontmatter
+      field).  If absent, the ticket is **parked** — skip it entirely.
+      **Gates ALWAYS wait for the Founder. NEVER synthesise, default, or infer a
+      `resume:` value.** An unanswered `interrupted` ticket stays parked until a
+      human Founder writes the `resume:` line.
+   2. If `resume:<value>` is present, locate the interrupt card at
+      `board/interrupts/<card-id>.json` where the card's `"ticket"` field matches
+      this ticket's `id`.  If multiple cards match, use the one with the
+      lexicographically latest filename (monotonically increasing card ids).
+      If no card is found: log a warning in the wave-log line for that ticket
+      and skip — do not auto-answer.
+   3. Validate that `<value>` is one of the card's `"options"` list (case-
+      sensitive, exact match).  If not: log an error in the wave-log line for that
+      ticket and skip — do not dispatch with an invalid value.
+   4. Transition the ticket `status: interrupted → in_progress` (update the
+      frontmatter `status:` field and `updated:` date; append a `## Log` entry
+      noting the resume value and the wave date).
+   5. Record the resume context (value + card) for injection into the dispatch
+      dynamic tail in step 5c (slot 3 — after the ticket body text, before
+      last-N scratchpad, strictly after the last `cache_control` breakpoint).
+
+   A ticket that was resumed in this step is dispatched in the normal priority
+   order below as `in_progress`.  Its zone / dep-blocked / clarify-blocked
+   guards still apply — a resumed ticket is not exempt from correctness checks.
+
+   Use `scripts/interrupt_roundtrip.py` (`detect_resumed_tickets`) to implement
+   this detection; it handles the card-lookup, validation, and injection-string
+   building so the orchestrator does not need to re-implement them inline.
+
+   Priority order: `p0` first, then `in_review` (unblock the pipeline), then
    `in_progress`, then `todo`. A role MAY take multiple tickets in one wave —
    spawn one subagent instance per ticket (each works WIP=1 in its own
    worktree). **Correctness guard (keep):** never two tickets touching the
@@ -219,6 +252,19 @@ the selection step — keep those.
       override:
       > Work the ticket `board/tickets/<file>.md`. Do its next concrete step per
       > your role overlay, update the ticket file (status + log), and report.
+
+      **Resume context injection (interrupted → in_progress tickets):** For any
+      ticket that transitioned `interrupted → in_progress` in step 3, append the
+      resume context block to the dynamic tail of the subagent prompt (slot 3
+      "specific ticket text") — strictly **after** the ticket body, before last-N
+      scratchpad.  Use `interrupt_roundtrip.build_resume_injection(value, card)`
+      to build the text (see `scripts/interrupt_roundtrip.py`).  The injected
+      block includes: the Founder's answer, the original question, the option list,
+      the interrupt card payload, and an idempotency reminder.
+
+      This block MUST appear only in the dynamic tail — **never** in the stable
+      prefix (ADR 0006: volatile content — Founder answer, ticket id, timestamp —
+      belongs after the last `cache_control` breakpoint, never before it).
 
       **W6 — Same-wave build + review (pipeline compression):** When a
       `todo` or `in_progress` ticket and its subsequent `in_review` step can
@@ -464,7 +510,7 @@ It fails the build if:
 Run standalone: `python3 scripts/check_cache_prefix.py`
 CI: wired into the `validate` job in `.github/workflows/ci.yml`.
 
-CACHE_PREFIX_VERSION: v11-fanout-deferred
+CACHE_PREFIX_VERSION: v12-interrupt-roundtrip
 
 ## Boundaries
 

@@ -42,6 +42,27 @@ from pathlib import Path
 from _paths import ROOT
 
 # ---------------------------------------------------------------------------
+# Idempotency warning patterns (R10 — DAS-1447)
+# ---------------------------------------------------------------------------
+
+# High-risk side-effect verbs that should have idempotency guards when they
+# appear in the body of an ``interrupted`` ticket.
+_RISKY_EFFECTS_RE = re.compile(
+    r"\b(merge[sd]?|spend[s]?|spending|charge[sd]?|charging|send[s]?|sending|"
+    r"notif(?:y|ies|ied|ying)|post(?:ed|s|ing)?|dispatch(?:ed|es|ing)?)\b",
+    re.IGNORECASE,
+)
+
+# Idempotency guard phrases — if any of these appear, we consider the ticket
+# already guarded and do NOT emit the warning.
+_IDEMPOTENCY_GUARD_RE = re.compile(
+    r"\b(idempotent|idempotency[\s\-]key|guard[\-\s]before|"
+    r"check[\s\-]if[\s\-]already|re\-runnable|safe\s+to\s+re\-run|"
+    r"already[\s\-]run|guard[\s\-]before[\s\-]act|double[\s\-]apply)\b",
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
@@ -210,6 +231,58 @@ def lint_tickets(
 
 
 # ---------------------------------------------------------------------------
+# Idempotency warnings (W10 — DAS-1447)
+# ---------------------------------------------------------------------------
+
+def warn_interrupted_idempotency(
+    tickets: list[tuple[Path, dict[str, str]]],
+) -> list[str]:
+    """Return warning strings for ``interrupted`` tickets with possibly non-
+    idempotent pre-interrupt side effects (DAS-1447).
+
+    A warning is emitted when:
+    - The ticket has ``status: interrupted``, AND
+    - Its body mentions a high-risk action verb (merge, spend, charge, send,
+      notify, post, dispatch) that could represent a non-idempotent pre-interrupt
+      side effect, AND
+    - No idempotency guard phrase is found in the body (idempotent, idempotency
+      key, guard-before-act, check-if-already-done, re-runnable, safe to re-run).
+
+    These are WARNINGS, not errors — the exit code is not affected.  Emit as
+    ``WARN`` lines so they are distinguishable from ``FAIL`` lines.
+    """
+    warnings: list[str] = []
+
+    for path, fm in tickets:
+        if fm.get("status", "").strip() != "interrupted":
+            continue
+        ticket_label = fm.get("id") or path.name
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        # Strip the frontmatter block so we only scan the body.
+        body = _FM_RE.sub("", text, count=1)
+
+        risky_matches = _RISKY_EFFECTS_RE.findall(body)
+        if not risky_matches:
+            continue  # No high-risk verbs — nothing to warn about.
+
+        if _IDEMPOTENCY_GUARD_RE.search(body):
+            continue  # Guard already present — no warning needed.
+
+        found = ", ".join(sorted({m.lower() for m in risky_matches}))
+        warnings.append(
+            f"{ticket_label}: interrupted ticket mentions possibly non-idempotent "
+            f"pre-interrupt side effect(s) ({found}) without an idempotency guard "
+            "— add a guard-before-act note so re-dispatch is safe (DAS-1447)"
+        )
+
+    return warnings
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -266,6 +339,17 @@ def main(argv: list[str] | None = None) -> int:
         for e in errors:
             print(f"  FAIL  {e}", file=sys.stderr)
         return 1
+
+    # W10 — idempotency warnings for interrupted tickets (DAS-1447).
+    # These are informational; they do NOT change the exit code.
+    idempotency_warnings = warn_interrupted_idempotency(tickets)
+    if idempotency_warnings:
+        print(
+            f"board_lint: {len(idempotency_warnings)} idempotency warning(s) "
+            f"(non-fatal — fix before re-dispatching interrupted tickets):"
+        )
+        for w in idempotency_warnings:
+            print(f"  WARN  {w}")
 
     print(f"board_lint: OK — {len(tickets)} ticket(s) checked, 0 violations.")
     return 0

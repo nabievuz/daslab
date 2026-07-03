@@ -38,6 +38,15 @@ updated: 2026-06-10
 ## Description
 What and why. Enough context to work without asking.
 
+<!-- AGENT NOTE — Idempotency (DAS-1447): if this ticket may be interrupted
+     mid-flight and later resumed, any side effect that runs before the
+     interrupt (a merge, charge, message send, or similar one-shot action)
+     MUST be safe to re-run after a Founder `resume:<value>`.  Use a
+     guard-before-act pattern: check-if-already-done, an idempotency key,
+     or make the operation naturally re-runnable.  Do NOT double-apply.
+     board_lint emits a WARN if it detects an unguarded side effect in an
+     `interrupted` ticket body. -->
+
 ## Acceptance criteria
 - [ ] verifiable outcome 1
 - [ ] verifiable outcome 2
