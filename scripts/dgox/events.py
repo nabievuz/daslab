@@ -124,6 +124,8 @@ _VALID_EVENT_TYPES = frozenset(
         "cache_hit",
         # OTel GenAI trace span (ORGANISM WS3 BRIDGE — ADR 0024 / DAS-1454):
         "span",
+        # per-ticket durable completion record (DAS-1444 / ORGANISM WS1 PULSE):
+        "ticket_completion",
     }
 )
 
@@ -1175,6 +1177,76 @@ class EventStore:
 # ---------------------------------------------------------------------------
 # Reader / replay helper
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Shape H — ticket_completion (DAS-1444 / ORGANISM WS1 — per-ticket durable
+# completion record written mid-wave for crash-safe resume)
+# ---------------------------------------------------------------------------
+
+
+def build_ticket_completion(
+    *,
+    ticket_id: str,
+    run_id: str,
+    status: str,
+    wave: int,
+    created_at: str,
+) -> dict[str, Any]:
+    """Build a ``ticket_completion`` event dict (Shape H — DAS-1444 / WS1 PULSE).
+
+    Emitted by ``pulse_checkpoint.append_ticket_completion`` as each ticket
+    finishes mid-wave.  Stored in ``board/runs/<run_id>/completions.jsonl``
+    using the same durable-append discipline (``O_APPEND`` + ``flock`` + ``fsync``)
+    as ``EventStore.append`` — so a crash after N completions leaves exactly
+    those N recorded and a resume re-dispatches only the remaining tickets.
+
+    Args:
+        ticket_id:  DAS-NNNN identifier of the completed ticket.
+        run_id:     ULID run join key — scopes the completion to its run.
+        status:     The status the ticket reached (e.g. ``"done"``, ``"in_review"``).
+        wave:       1-based wave index within the run the ticket completed in.
+        created_at: ISO-8601 UTC timestamp string (caller-supplied — injectable
+                    for tests; do NOT call ``utcnow()`` inside this helper).
+
+    Returns:
+        A dict conforming to the ``ticket_completion`` shape ready for
+        ``EventStore.append``.
+    """
+    return {
+        "event_type": "ticket_completion",
+        "ticket_id": ticket_id,
+        "run_id": run_id,
+        "status": status,
+        "wave": wave,
+        "created_at": created_at,
+    }
+
+
+def validate_ticket_completion(event: dict[str, Any]) -> list[str]:
+    """Return validation errors for a ``ticket_completion`` event.
+
+    Checks the envelope first (envelope-first pattern), then:
+    - ``event_type`` pinned to ``"ticket_completion"``.
+    - ``run_id`` is required (non-empty string) — run join key.
+    - ``status`` is a non-empty string.
+    - ``wave`` is a positive (1-based) integer.
+    """
+    errors = validate_envelope(event)
+    if event.get("event_type") not in (None, "ticket_completion"):
+        errors.append(
+            f"event_type must be 'ticket_completion'; got {event.get('event_type')!r}"
+        )
+    run_id = event.get("run_id")
+    if not run_id or not isinstance(run_id, str):
+        errors.append("run_id is required for ticket_completion and must be a non-empty string")
+    status = event.get("status")
+    if status is not None and (not isinstance(status, str) or not status):
+        errors.append("status must be a non-empty string")
+    wave = event.get("wave")
+    if wave is not None and (isinstance(wave, bool) or not isinstance(wave, int) or wave < 1):
+        errors.append(f"wave must be a positive (1-based) integer; got {wave!r}")
+    return errors
 
 
 def iter_events(

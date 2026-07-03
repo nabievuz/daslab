@@ -32,3 +32,12 @@ board/.events.jsonl
 
 # Result-cache store (content-addressed; TTL-governed wave state — DAS-1450 / ORGANISM P6)
 board/.cache/
+
+# ORGANISM run-artifact tree (runtime state — ADR-0023 §5); keep only the final summary.
+# "board/runs/**" ignores everything inside board/runs/ at any depth; the two
+# negations un-ignore the run-id sub-directories (so git can traverse them) and
+# then un-ignore run-summary.md (the one retained committable artifact).  A plain
+# "board/runs/" would block traversal and make the negation inert (git limitation).
+board/runs/**
+!board/runs/*/
+!board/runs/*/run-summary.md
