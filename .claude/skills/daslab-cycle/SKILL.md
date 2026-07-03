@@ -528,3 +528,74 @@ CACHE_PREFIX_VERSION: v13-interrupt-mergepolicy
   ticket a subagent's report explicitly asks for, or (b) the one approved-goal
   refill case above. New project discovery is never done by cycle.
 - Board state lives only in the ticket files — never cache between waves.
+
+## Recovery affordances — --resume and --fork (DAS-1445)
+
+Two operator-invoked recovery modes extend `/daslab-cycle`. Both are
+explicitly operator-invoked (passed as arguments); normal wave dispatch is
+unchanged.
+
+### `--resume <run_id>`
+
+Replay `board/.events.jsonl` for `run_id` to the last valid checkpoint and
+re-dispatch **only unfinished** tickets (those whose last recorded `to_status`
+is not a terminal `done`/`blocked`). Already-finished tickets are NOT
+re-dispatched (no duplicate work, no clobbering already-merged branches).
+
+**Refuse on corrupted chain.** If `replay_qa.replay_run` finds a broken
+or invalid transition for any ticket in the run, resume raises a `ValueError`
+and stops — it never re-dispatches off a corrupted replay (T5 zero-corrupted
+guardrail; consistent with `scripts/check_recovery.py`).
+
+**Implementation.** Call `scripts/resume_fork.resume_run(run_id)` which:
+1. Groups events via `replay_qa.group_runs` (canonical grouping contract).
+2. Calls `replay_qa.replay_run` per ticket (canonical transition walk).
+3. Cross-checks against `pulse_checkpoint.get_completed_tickets` to exclude
+   tickets with a durable completion record (crash-safe: do not re-dispatch
+   a ticket that completed before the crash).
+4. Returns `{ticket_id: last_status}` for tickets still needing dispatch.
+
+**Selection guards still apply.** A resumed ticket is NOT exempt from the
+4 selection guards (zone, dep-blocked, AADL gate-order, clarify gate). Apply
+them to the `resume_run` result before dispatching.
+
+**Worktree reuse.** The worktree path is a pure function of ticket id
+(`.claude/worktrees/<TICKET-ID>/`). If a worktree already exists at that
+path (previous stalled wave), reuse it — do NOT re-create it (step 5b rule).
+
+**`run_id` in events.** For `--resume` to find a wave's tickets, each
+`routing_decision` event SHOULD carry the wave's ULID as `run_id`. When
+events lack an explicit `run_id`, `replay_qa._run_key` falls back to
+`ticket_id`, so `--resume DAS-NNNN` can still replay a single ticket's chain.
+Emit `run_id` in step 5d to enable multi-ticket wave recovery.
+
+### `--fork <run_id>@wave-NNN`
+
+Copy the source run's checkpoint state as of `wave-NNN` into a **new**
+`run_id` (a freshly minted ULID) and continue alternative planning from there.
+The original run's recorded events in `board/.events.jsonl` are left
+byte-for-byte untouched — fork writes only new-run events; it never rewrites,
+deletes, or re-parents the source run's history.
+
+**Parse the argument** with `scripts/resume_fork.parse_fork_arg(arg)` which
+returns `(source_run_id, wave_num)`.
+
+**Implementation.** Call `scripts/resume_fork.fork_run(source_run_id, wave_num)` which:
+1. Calls `pulse_checkpoint.reconstruct_ticket_states(source_run_id, wave_num)`
+   to recover the full ticket state at `wave-NNN` from the checkpoint delta chain.
+2. Mints a new ULID via `pulse_checkpoint.generate_ulid()`.
+3. Returns `(new_run_id, ticket_states)` — the new run starts empty (no
+   checkpoint files copied to avoid corrupting the ledger hash chain).
+
+New waves dispatched after the fork emit events with `run_id = new_run_id`
+and write their own checkpoints under `board/runs/<new_run_id>/`. The source
+run's audit trail is permanently intact.
+
+### Shadow-rule note (ADR-0011 Phase-1)
+
+`--resume` reads `board/.events.jsonl` to decide dispatch — the first genuine
+event-reader in the recovery path. The Phase-1 "flag-on == flag-off dispatch"
+guarantee holds for ALL normal waves (step 5d remains purely observational).
+Only the explicit operator-invoked `--resume`/`--fork` path reads events.
+A formal ADR supersession is recommended (tracked; see DAS-1445 log and the
+comment in `tests/test_dgox_phase1_shadow.py`).

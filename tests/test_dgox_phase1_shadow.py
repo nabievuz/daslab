@@ -466,6 +466,26 @@ class TestShadowClean:
         # tracked follow-up, and ADR-0010 C3 / ADR-0011 Phase-1 shadow rule is being
         # superseded by ORGANISM (resume/emitter make events load-bearing) — that
         # supersession needs its own ADR.
+        #
+        # DAS-1445 — resume_fork.py (event READER, NOT a producer):
+        #   resume_fork.py does NOT import dgox.* directly (it reads events via
+        #   wave_kpi.read_events and replay_qa, neither of which imports dgox).
+        #   Therefore it does NOT appear in _EVENT_PRODUCERS and is NOT excluded
+        #   from this AST scan — the scan passes cleanly.
+        #
+        #   However, resume_fork.py DOES read board/.events.jsonl to decide which
+        #   tickets to re-dispatch via --resume / --fork.  This is the first genuine
+        #   event-READER in the recovery path and it tensions the Phase-1 shadow rule.
+        #   Mitigations: (a) scoped ONLY to explicit operator-invoked --resume/--fork
+        #   (normal wave dispatch is unchanged), (b) no dgox import (import scan is
+        #   unaffected), (c) failure-isolated (missing/corrupt store → empty result or
+        #   ValueError, never silent wrong dispatch).  The "flag-on == flag-off dispatch"
+        #   guarantee remains intact for normal /daslab-cycle waves.
+        #
+        #   A formal ADR supersession (ADR-0010 C3 / ADR-0011 Phase-1) is RECOMMENDED
+        #   to canonicalize "events are load-bearing for explicit operator-invoked
+        #   recovery" vs "events are advisory-only for normal dispatch".  The orchestrator
+        #   should create a follow-up ADR ticket (see DAS-1445 log).
         _EVENT_PRODUCERS = {"pulse_checkpoint.py"}
         scripts_dir = _SCRIPTS
         py_files = [
