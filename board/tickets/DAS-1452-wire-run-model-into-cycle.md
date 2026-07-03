@@ -1,8 +1,8 @@
 ---
 id: DAS-1452
 title: Wire run-model + dispatch emitter into daslab-cycle (preserve 4 guards)
-status: todo
-assignee: cto
+status: in_review
+assignee: chairman
 author: ceo
 dept: engineering
 priority: p1
@@ -127,3 +127,58 @@ in the tail only.
 
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — CTO
+Wired the ORGANISM WS1 "pulse" run-model + dispatch emitter into
+`.claude/skills/daslab-cycle/SKILL.md`, EXTEND-only (no step renumber, no
+selection-logic reflow):
+- **Step 0 — run-model open:** mint a durable `run_id` via
+  `pulse_checkpoint.generate_ulid()`; the whole run-model (open + checkpoints +
+  emission) is gated on a NEW feature flag `organism_emit` (default OFF), a
+  SEPARATE channel from the step-5d `dgox_emit` shadow (dgox_emit untouched).
+  Explicit no-daemon/no-timer statement: run opens here, closes in step 6, one
+  operator invocation = one wave.
+- **Step 4 — wave-open checkpoint:** `pulse_checkpoint.write_wave_checkpoint(...)`
+  at the wave-open boundary (post step-3 selection, before spawn), recording the
+  plan; observational only.
+- **Step 5f — run-lifecycle span capture:** buffer per-dispatch
+  `DispatchRecord` inputs (run_id/ticket_id/model/role/goal/VERSION/start ts).
+- **Step 6 — run-lifecycle emit + run close:** `dispatch_emitter.emit_wave(records)`
+  appends the paired `run_start`/`run_end`/span triplet per dispatch (typed
+  builders, append-only); `pulse_checkpoint.append_ticket_completion(...)` +
+  wave-close `write_wave_checkpoint(...)`; run CLOSED in-wave.
+- **Step 7:** report `run_id` + `board/runs/<run_id>/` path when the flag is on.
+
+Enablement flag: **`organism_emit`** added to `scripts/feature_flags.py`
+DEFAULTS (default False = safe) + `config/features.yaml`; read via
+`feature_flags.enabled("organism_emit")`. Updated `tests/test_feature_flags.py`
+exact-dict assertions for the new key (3 tests).
+
+HARD CONSTRAINTS held:
+- **4 selection guards PRESERVED VERBATIM** — step 3 (zone correctness,
+  depends_on gate, AADL gate order, clarify gate + circuit-breaker) is byte-for-
+  byte unchanged; diff hunks touch only steps 0/4/5f/6/7 + the version line.
+- **Worktree pure-id path** `.claude/worktrees/<TICKET-ID>/` (step 5b) intact —
+  no run_id/timestamp injected into the path (explicitly reaffirmed in 5f text).
+- **No background timer/daemon/loop** — run opens and closes within one wave.
+- **`check_loop_mode.py` exit 0** — loop.yaml NOT touched (stays shadow,
+  auto_apply false).
+- **Emission is post-decision / observational / failure-isolated** — every emit/
+  checkpoint/completion is wrapped; a failed append never blocks dispatch;
+  flag-on == flag-off dispatch DECISIONS (only difference = lines in gitignored
+  `board/.events.jsonl` + artifacts under `board/runs/<run_id>/`).
+
+Cache-prefix: stable-prefix bytes changed (steps 0/4/5f/6/7 are before the
+sentinel) → bumped `CACHE_PREFIX_VERSION` v13-interrupt-mergepolicy →
+`v14-organism-runmodel` and regenerated `scripts/.cache_prefix_baseline` via
+`check_cache_prefix.py --fix` in this commit; no volatile tokens introduced.
+
+Full suite GREEN: pytest 993 passed / 1 skipped; diagnostics 100/100;
+board_lint 0; check_loop_mode exit 0; check_cache_prefix exit 0;
+check_never_auto_approve clean; ruff clean.
+
+**GATE-5 Deployment — never auto-approve.** This is live dispatch wiring of the
+orchestrator. Not self-approving: status → in_review, assignee → chairman for a
+deployment-gate review (CTO's reviewer is CEO, but CEO is the author →
+escalate one level to Chairman per ROUTING.md; aligns with the GATE-5 directive).
+Local-only: committed on branch `feat/das-1452-wire-cycle`, no push/PR.

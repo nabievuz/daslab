@@ -4,7 +4,9 @@
 Single reader for `config/features.yaml`. Flags default **OFF** (consumerless machinery
 stays quiet so it cannot burn tokens), and an unknown/empty file falls back to the same
 defaults. Code paths gate emission with `enabled("dgox_emit")` etc.; the /daslab-cycle
-skill reads the same file before its step-5d shadow emission.
+skill reads the same file before its step-5d shadow emission (`dgox_emit`) and before the
+ORGANISM WS1 "pulse" run-model wiring — run-open, wave checkpoints, and run_start/run_end/
+span emission at steps 0/5/6 (`organism_emit`, a SEPARATE channel from `dgox_emit`).
 
 Usage:
     python scripts/feature_flags.py            # print the resolved flags
@@ -22,7 +24,11 @@ except ImportError:  # pragma: no cover - yaml is a repo dependency
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATURES = REPO_ROOT / "config" / "features.yaml"
-DEFAULTS: dict[str, bool] = {"dgox_emit": False, "t4_t7_governors": False}
+DEFAULTS: dict[str, bool] = {
+    "dgox_emit": False,
+    "t4_t7_governors": False,
+    "organism_emit": False,
+}
 
 
 def load(path: Path | None = None) -> dict[str, bool]:

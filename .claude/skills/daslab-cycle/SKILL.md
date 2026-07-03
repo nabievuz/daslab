@@ -49,6 +49,33 @@ the selection step — keep those.
    record carries its own `project` key; the drainer passes that key verbatim —
    never merges across projects.
 
+   **Run-model open (ORGANISM WS1 "pulse" — feature-gated `organism_emit`,
+   default OFF).** Gate the ENTIRE run-model wiring (this open, the wave
+   checkpoints, and the run_start/run_end/span emission at steps 5–6) on the
+   `organism_emit` flag in `config/features.yaml`, read via
+   `python3 scripts/feature_flags.py` (`feature_flags.enabled("organism_emit")`).
+   It is a SEPARATE channel from the step-5d `dgox_emit` shadow — do NOT conflate
+   the two flags, and do NOT disturb `dgox_emit`. It defaults OFF; when OFF, SKIP
+   every run-model sub-step below — dispatch DECISIONS are byte-identical to the
+   flag-on path (same tickets selected, routed, dispatched, and reported). When ON:
+   - Mint a durable run join key with `pulse_checkpoint.generate_ulid()` (a
+     lexicographically-sortable ULID — the `run_id` for this wave). Hold it in
+     run-local memory for this single invocation only; it is volatile and lives
+     in the dynamic tail, NEVER in this stable prefix (ADR 0006).
+   - One operator invocation = one wave = one run. Opening a run starts NO
+     daemon, loop, or timer: the run is opened here and CLOSED in step 6 within
+     this same wave. The "one invocation = one wave, no background timer"
+     contract is unchanged — the run-model only adds durable state for
+     resume/replay, never a driver.
+   - The wave-open checkpoint is written at the step-4 wave-open boundary (after
+     step-3 selection is final, before any subagent spawns) — see step 4.
+   - **Failure isolation:** every run-model call (ULID mint, checkpoint,
+     completion, emit) is wrapped so any exception is caught and logged in the
+     wave-log/report; the wave proceeds unconditionally. A failed run-model
+     write NEVER blocks dispatch (flag-on == flag-off dispatch decisions; the
+     only difference is lines in the gitignored `board/.events.jsonl` and files
+     under `board/runs/<run_id>/`).
+
 1. **Read state.** `board/README.md` (schema), `board/ROUTING.md` (reviewer
    map), then the frontmatter of every `board/tickets/*.md`. A missing tickets
    dir is an identity failure → stop. **This wave dispatches the org
@@ -216,6 +243,19 @@ the selection step — keep those.
    - This log is consumed by `scripts/wave_kpi.py`; do not alter the marker
      format without updating that script. Path: `board/.wave-log` (listed in
      `.gitignore` so it is never committed).
+
+   **Wave-open checkpoint (ORGANISM WS1 "pulse" — feature-gated `organism_emit`,
+   default OFF; skip entirely when OFF).** When ON, immediately after the
+   wave-log marker and before any subagent spawns, write the wave-open
+   checkpoint with
+   `pulse_checkpoint.write_wave_checkpoint(run_id=<the step-0 run_id>,
+   wave=<wave-index>, ticket_id=<anchor ticket>,
+   curr_ticket_states=<selected ticket-id→status map>,
+   pending_interrupts=<parked interrupted ids>, created_at=utcnow())`. This
+   records the wave PLAN at the open boundary (board hash, event offset, delta
+   states, tamper-evident ledger hash) — it is a post-decision OBSERVATION and
+   never changes which tickets step 3 selected. Wrap it in the run-model failure
+   isolation from step 0: a checkpoint exception is logged and the wave proceeds.
 
 5. **Dispatch (worktree-per-ticket isolation — ADR 0005, W1).** Before spawning
    any subagent, the **orchestrator** creates an isolated git worktree for every
@@ -395,6 +435,24 @@ the selection step — keep those.
          synthesis agent consumes those published results, not the private
          `## Fanout Payload` sections.
 
+   f. **Run-lifecycle span capture (ORGANISM WS1 "pulse" — feature-gated
+      `organism_emit`, default OFF; skip entirely when OFF). SEPARATE channel
+      from the step-5d `dgox_emit` shadow — do NOT conflate the two flags.**
+      When ON: as each subagent is spawned, capture that dispatch's
+      run-lifecycle fields into a run-local buffer — `run_id` (from step 0),
+      `ticket_id`, `model` (the exact explicit string passed to the Agent tool —
+      LAW 3, never inferred), `role_key`, `goal`, engine `VERSION`, and the
+      dispatch start timestamp. These are the inputs to one
+      `dispatch_emitter.DispatchRecord`. The paired `run_start` / `run_end` /
+      span events are NOT appended here: they are built and appended together at
+      collect (step 6), once each ticket's outcome, PR/CI/T7 evidence, and end
+      timestamp are known (the emitter builds the triplet from the combined
+      dispatch+collect record). This capture is purely observational — it reads
+      no event back into the dispatch decision, and a failure to buffer is caught
+      and logged and NEVER blocks dispatch (flag-on == flag-off dispatch
+      decisions). This does not alter the worktree path (still the pure function
+      of ticket id from step 5b) or any selection guard.
+
 6. **Collect & verify.** After all return: re-read each dispatched ticket —
    confirm `status`/`updated`/log actually changed (a subagent that returned
    text but didn't edit the file gets its result written into the log by YOU,
@@ -438,10 +496,43 @@ the selection step — keep those.
    agent), log the failure and continue — the step 2 reap pass in the next wave
    will clean it up.
 
+   **Run-lifecycle emission + run close (ORGANISM WS1 "pulse" — feature-gated
+   `organism_emit`, default OFF; skip entirely when OFF).** When ON, after the
+   collect + CI/PR done-gate has settled every ticket's final status:
+   - Build one `dispatch_emitter.DispatchRecord` per dispatched ticket from the
+     step-5f buffer plus the collected outcome (`outcome`, `merged_pr`,
+     `ci_status`, `t7_pass`, `t7_score`, end timestamp), then call
+     `dispatch_emitter.emit_wave(records)` to append each dispatch's
+     `run_start` / `run_end` / span triplet to `board/.events.jsonl` via the
+     typed builders (append-only — it never rewrites or truncates a line).
+     `run_start` and `run_end` share the wave's `run_id` so the metrics readers
+     (`wave_kpi` / `metrics_lib`) pair them per run.
+   - As each ticket finishes, append a durable per-ticket completion record with
+     `pulse_checkpoint.append_ticket_completion(run_id=<step-0 run_id>,
+     ticket_id=…, status=…, wave=<wave-index>, created_at=utcnow())` — the
+     crash-safe resume ledger (`--resume` reads it via `get_completed_tickets`).
+   - Write the **wave-close checkpoint** with
+     `pulse_checkpoint.write_wave_checkpoint(...)` capturing the final
+     `{ticket-id: status}` states at the wave-close boundary (delta-chained,
+     tamper-evident ledger hash) — the closing bookend to the step-4 wave-open
+     checkpoint.
+   - The run is thereby CLOSED within this single operator-invoked wave. No
+     daemon, loop, or timer is started; the next wave is a fresh operator
+     invocation (the "one invocation = one wave" contract is preserved).
+   - **Failure isolation (run-model law from step 0):** every emit / checkpoint /
+     completion call is wrapped so any exception is caught and logged in the wave
+     report; the collect/verify results above are unaffected. A failed append
+     NEVER blocks the wave — flag-on and flag-off produce identical dispatch and
+     collect DECISIONS; the only difference is lines in the gitignored
+     `board/.events.jsonl` and artifacts under `board/runs/<run_id>/`.
+
 7. **Report the wave** (this is what the user reads):
    - table: ticket → old status → new status → agent → one-line outcome
    - blocked tickets with reasons; escalations; orphaned todos still unrouted
    - what the next wave would pick up.
+   - when `organism_emit` is ON: the wave's `run_id` and the
+     `board/runs/<run_id>/` checkpoint path (for `--resume` / `--fork` and
+     downstream observability); omit when the flag is OFF.
 
 ## Prompt-cache prefix layout (ADR 0006 — W4)
 
@@ -519,7 +610,7 @@ It fails the build if:
 Run standalone: `python3 scripts/check_cache_prefix.py`
 CI: wired into the `validate` job in `.github/workflows/ci.yml`.
 
-CACHE_PREFIX_VERSION: v13-interrupt-mergepolicy
+CACHE_PREFIX_VERSION: v14-organism-runmodel
 
 ## Boundaries
 
