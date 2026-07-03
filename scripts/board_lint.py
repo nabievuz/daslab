@@ -17,7 +17,9 @@ Rules enforced
 6. Subtasks (``parent`` is non-empty) must also carry ``goal``.
 7. ``parent`` references an ID that exists in the board (no dangling pointers).
 8. ``in_review`` tickets: ``assignee`` must differ from ``author``
-   (no self-review).
+   (no self-review). This rule is scoped to ``status == "in_review"`` only, so
+   an ``interrupted`` ticket is out of its scope — it is never rejected or
+   stranded by R8 (DAS-1446 consumer sweep).
 9. Org board is platform-only: a ticket on ``board/tickets/`` must NOT declare a
    ``project:`` field — project tickets live in ``projects/<slug>/board-tickets/``
    (QONUN — Project Placement Law). Project boards (path ``…/board-tickets/``)
@@ -43,8 +45,15 @@ from _paths import ROOT
 # Constants
 # ---------------------------------------------------------------------------
 
+# ``interrupted`` (added DAS-1446): a running agent paused itself to ask the
+# Founder a question via an interrupt card (see board/interrupts/README.md). It
+# is distinct from ``blocked`` (external-dependency stall, never auto-dispatched)
+# and ``in_review`` (awaiting a reviewer). Legal transitions:
+#   in_progress -> interrupted   (agent raises an interrupt card and yields)
+#   interrupted -> in_progress   (Founder writes resume:<value>; re-enters wave)
+#   interrupted -> blocked       (question abandoned; needs a log reason, R-per-board)
 VALID_STATUSES = frozenset(
-    {"backlog", "todo", "in_progress", "blocked", "in_review", "done"}
+    {"backlog", "todo", "in_progress", "blocked", "in_review", "done", "interrupted"}
 )
 VALID_PRIORITIES = frozenset({"p0", "p1", "p2"})
 REQUIRED_FIELDS = (

@@ -1,8 +1,8 @@
 ---
 id: DAS-1446
 title: Interrupt-cards schema + interrupted status enum (P3)
-status: todo
-assignee: security-lead
+status: done
+assignee: cto
 author: ceo
 dept: engineering
 priority: p1
@@ -93,24 +93,110 @@ No consumer may reject a validly-formed `interrupted` ticket or silently drop it
 
 ## Acceptance criteria
 
-- [ ] Interrupt-card JSON schema is documented (fields `question`, `options`,
+- [x] Interrupt-card JSON schema is documented (fields `question`, `options`,
       `ticket`, `payload`, `created_by`; path `board/interrupts/<id>.json`; the
-      `resume:<value>` answer contract stated).
-- [ ] `interrupted` is added to `scripts/board_lint.py` `VALID_STATUSES`.
-- [ ] `interrupted` is added to the status enum on `board/README.md` **line 27**
+      `resume:<value>` answer contract stated). → `board/interrupts/README.md` +
+      `board/interrupts/schema.json` (JSON Schema draft 2020-12).
+- [x] `interrupted` is added to `scripts/board_lint.py` `VALID_STATUSES`.
+- [x] `interrupted` is added to the status enum on `board/README.md` **line 27**
       (and any other enum echo in that file kept in sync).
-- [ ] Legal transitions are documented: `in_progress`→`interrupted`;
+- [x] Legal transitions are documented: `in_progress`→`interrupted`;
       `interrupted`→`in_progress` (via `resume:<value>`); `interrupted`→`blocked`
-      (abandoned).
-- [ ] Consumer sweep is complete and written down — each consumer listed with how it
+      (abandoned). → `board/interrupts/README.md`, `board/README.md` Rules,
+      and a comment on `VALID_STATUSES` in `board_lint.py`.
+- [x] Consumer sweep is complete and written down — each consumer listed with how it
       handles `interrupted`: (1) board_lint R2, (2) board_lint R8, (3) /daslab-cycle
       triage, (4) ROUTING in_review logic — none rejects or strands an `interrupted`
-      ticket.
-- [ ] `board_lint` accepts a well-formed `interrupted` ticket (a sample/fixture
-      ticket with `status: interrupted` lints clean, exit 0).
-- [ ] Tests cover the new status: a positive case (`interrupted` accepted) and a
-      negative case (an unknown/invalid status still rejected) pass.
+      ticket. → `board/interrupts/README.md` §Consumer sweep.
+- [x] `board_lint` accepts a well-formed `interrupted` ticket (a sample/fixture
+      ticket with `status: interrupted` lints clean, exit 0). →
+      `test_load_tickets_interrupted_file` (end-to-end via `load_tickets`).
+- [x] Tests cover the new status: a positive case (`interrupted` accepted) and a
+      negative case (an unknown/invalid status still rejected) pass. →
+      `test_interrupted_status_accepted`, `test_unknown_status_still_rejected`,
+      `test_interrupted_not_subject_to_self_review_r8` (25 passed).
 
 ## Log
 ### 2026-07-03 — CEO
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
+
+### 2026-07-03 — Security Lead
+Built P3 interrupt-cards schema + `interrupted` status (GATE-2 Design). Extended
+existing machinery, did not fork it.
+
+**Schema.** New `board/interrupts/` dir (parallel to `board/tickets/`, outside the
+`DAS-*.md` glob). `board/interrupts/README.md` = design-of-record: object shape
+`{question, options, ticket, payload, created_by}` at path
+`board/interrupts/<id>.json`, the `resume:<value>` answer contract (`<value>` ∈
+`options`; exact write mechanism deferred to DAS-1447), and the legal transitions.
+`board/interrupts/schema.json` = machine-checkable JSON Schema (draft 2020-12) for
+the DAS-1447 consumer. Nothing reads the schema yet — additive only.
+
+**Enum (single source of truth).** Added `interrupted` to `VALID_STATUSES` in
+`scripts/board_lint.py` (with a transition-doc comment) AND to the enum comment on
+`board/README.md` line 27 — one enum, mirrored. Added an `interrupted` rule bullet
+to the board Rules section.
+
+**Legal transitions (design of record):** `in_progress`→`interrupted` (agent raises
+card, yields); `interrupted`→`in_progress` (Founder `resume:<value>`, re-enters
+wave); `interrupted`→`blocked` (abandoned; needs a log reason).
+
+**Consumer sweep (all 4 clean — no consumer rejects or strands an `interrupted`
+ticket):** (1) board_lint R2 status-enum → now ACCEPTS it. (2) board_lint R8
+in_review self-review → UNTOUCHED, keys off `status == "in_review"` only (added a
+docstring note + a regression test). (3) `/daslab-cycle` triage → `interrupted` is
+NON-actionable (not in the `p0`→`in_review`→`in_progress`→`todo` selection order),
+so it is parked, not dispatched, not treated as `blocked`; the step-2 in_review
+reassignment guard does not touch it. (4) `board/ROUTING.md` in_review reviewer map
+→ NO reviewer semantics for `interrupted`, never routed to a reviewer. Documented in
+`board/interrupts/README.md` §Consumer sweep and in the board Rules bullet.
+
+**Tests (tests/test_board_lint.py, 25 passed):** positive `test_interrupted_status_accepted`;
+end-to-end `test_load_tickets_interrupted_file`; R8-scope `test_interrupted_not_subject_to_self_review_r8`;
+negative `test_unknown_status_still_rejected` (enum stays closed — a typo status is
+still rejected); updated `test_valid_statuses_are_accepted` to include `interrupted`.
+
+**Validators (all green):** `board_lint` 0 violations (17 tickets); `check_never_auto_approve`
+clean (17 tickets — re-run as required for a governance/validator change);
+`pytest tests/test_board_lint.py` 25 passed; `diagnostics` 100/100.
+
+Committed LOCAL-ONLY to `feat/das-1446-interrupt-schema` (no push/PR per ORGANISM
+LOCAL-ONLY git strategy). This is security/governance-touching → set `in_review`,
+assignee `cto` for a CTO review in the next wave (no same-wave compression, per the
+cycle security guard). Produces `interrupt-schema`, consumed by DAS-1447.
+
+### 2026-07-03 — CTO (blocking security review — PASS)
+Reviewed the full `git diff main` as security reviewer (LAW 2, no compression —
+this touches the status enum + a validator). **Verdict: PASS → done.** Note:
+LOCAL-ONLY build, so "done" here = green local validators + this review, not a
+merged remote PR (no push/PR per the ORGANISM LOCAL-ONLY strategy).
+
+**What I checked against source (not just the ticket's own claims):**
+1. **`interrupted` strands/mis-handles nothing.** R8 (`board_lint.py`) guards
+   `status == "in_review" and assignee == author` — verified at the source line;
+   an `interrupted` ticket is out of scope, never rejected/stranded. `/daslab-cycle`
+   step-3 selection order is `p0 → in_review → in_progress → todo` (SKILL.md:78-79)
+   — `interrupted` is absent, so it is parked (non-actionable), not dispatched, not
+   coerced to `blocked`; step-2 reassignment guard is scoped to `in_review` only, so
+   it does not touch it. `board/ROUTING.md` reviewer map applies only to `in_review`
+   — no `interrupted` reviewer semantics. Consumer sweep matches the code.
+2. **Schema + `resume:<value>` contract is sound, no smuggling.** `schema.json`
+   sets `additionalProperties: false` (no extra field injection), `options` is a
+   non-empty `uniqueItems` array of non-empty strings, `ticket` is pinned to
+   `^DAS-[0-9]+$`, `payload` must be an object. The answer contract is fixed here:
+   `<value>` MUST be one of `options` — runtime enforcement is correctly deferred to
+   the DAS-1447 consumer; the design does not permit an out-of-set value by contract.
+3. **Idempotency (DAS-1447 scope) is not precluded.** One card = one file at
+   `board/interrupts/<id>.json`; the schema carries no answered/consumed field but
+   nothing in it prevents DAS-1447 from removing/marking the card on resume or making
+   injection idempotent. Additive-only, no consumer reads the schema yet.
+4. **Tests cover the new status:** positive (`test_interrupted_status_accepted`),
+   end-to-end on disk (`test_load_tickets_interrupted_file`), R8-scope regression
+   (`test_interrupted_not_subject_to_self_review_r8`), and negative — enum stays
+   closed, a typo status is still rejected (`test_unknown_status_still_rejected`).
+
+**Validators re-run in the worktree (all green):** `board_lint` 0 violations (17
+tickets); `check_never_auto_approve` clean (17); `pytest tests/test_board_lint.py`
+25 passed; `diagnostics` 100/100; `schema.json` parses as valid JSON.
+
+Signed off. Ready for DAS-1447 (runtime consumer) to build on the accepted schema.

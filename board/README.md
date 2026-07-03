@@ -24,7 +24,7 @@ Name: `tickets/DAS-<n>-<slug>.md` (n strictly increasing; next id = max existing
 ---
 id: DAS-1001
 title: Short imperative title
-status: todo            # backlog | todo | in_progress | blocked | in_review | done
+status: todo            # backlog | todo | in_progress | blocked | in_review | done | interrupted
 assignee: backend-eng-1 # role key = .claude/agents/<key>.md; empty = needs routing
 author: senior-pm       # role that created it (never reviews its own work)
 dept: engineering
@@ -81,6 +81,18 @@ of how any risk classifier scored it.
   never commit to `main`).
 - `blocked` requires a precise reason in the log; external-dependency blocks
   (RAHMAT / UZINFOCOM / tax / legal entity) are never auto-dispatched.
+- `interrupted` (DAS-1446) parks a ticket whose agent paused itself to ask the
+  Founder a question mid-flight via an **interrupt card**
+  (`board/interrupts/<id>.json` — schema in [`interrupts/README.md`](interrupts/README.md)).
+  It is distinct from `blocked` (external stall) and `in_review` (awaiting a
+  reviewer). Legal transitions: `in_progress`→`interrupted` (agent raises a card
+  and yields); `interrupted`→`in_progress` when the Founder writes `resume:<value>`
+  (the ticket re-enters the wave with the answer available); `interrupted`→`blocked`
+  if the question is abandoned (needs a log reason, per the `blocked` rule above).
+  An `interrupted` ticket is **not actionable** — `/daslab-cycle` triage parks it
+  (does not dispatch it, does not treat it as `blocked`) until it becomes
+  `in_progress` again; it has **no reviewer semantics**, so ROUTING's `in_review`
+  reviewer map never applies to it.
 - Subtasks carry `parent:` + `goal:` — no orphan tickets.
 - For new projects, tickets may be created only from
   `projects/<project>/APPROVED-GOAL-QUEUE.md` items that have explicit Founder
