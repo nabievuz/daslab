@@ -1,7 +1,7 @@
 ---
 id: DAS-1442
 title: Author ADR-0023 run-model (run_id/ULID, board/runs, wave-checkpoints, delta storage)
-status: in_review
+status: done
 assignee: chairman
 author: ceo
 dept: engineering
@@ -185,3 +185,59 @@ this wave (no push / no PR) per Founder's pending ORGANISM remote decision.
 Set `status: in_review`. Reviewer routing: my (CTO) manager per ROUTING.md is CEO, but
 CEO is this ticket's author — ROUTING.md's rule "if the manager IS the author, escalate one
 level" routes review up to CEO's manager, **Chairman of the Board**. `assignee: chairman`.
+
+### 2026-07-03 — Chairman of the Board
+
+**GATE-1 (Planning) sign-off — PASS.** Reviewed `docs/adr/0023-run-model.md` in full against
+this ticket's 8 acceptance criteria and the AADL §3 Stage-1 checklist. Reviewer routing
+confirmed legitimate: ROUTING.md's "manager-is-author → escalate one level" correctly lands
+CTO→CEO(author)→Chairman, so this is not a self-review.
+
+Verified (cross-checked against the actual code, not just the ADR prose):
+
+1. **`run_id` = ULID with rationale** — §1 states sortable-vs-UUIDv4 (breaks `created_at`
+   second-resolution ties in true creation order) and collision-safe-vs-plain-timestamp
+   (80 random bits under parallel waves), plus "no new dependency — ULID is a format,
+   stdlib-generatable." AC-3 satisfied.
+2. **Concrete field names** — §2 gives `manifest.json` (ordered `waves` → per-wave `tickets`
+   → per-ticket `routing` role→model + `goal`/`created_at`/`engine_version`) and
+   `wave-NNN.checkpoint.json` (`board_hash`, `event_offset`, `ticket_states`,
+   `pending_interrupts`, `ledger_hashes {prev,self}`). AC-4 satisfied.
+3. **Per-step DELTA storage explicit** — §3 states delta base = prior checkpoint via
+   `ledger_hashes.prev` (baseline = manifest), reconstruction = apply deltas in order OR
+   replay events to `event_offset`, and the O(waves × board_size) bloat rationale. AC-5.
+4. **Gitignored-except-summary** — §2/§5 + the implementation-note `.gitignore` stanza
+   (`board/runs/` ignored, `!board/runs/*/run-summary.md` un-ignored). AC-6.
+5. **No orphan format; reuses existing contract** — §4 rides `routing_decision` +
+   `recovery_drill` + reserved `run_start`/`run_end`, `run_id` stays the join key.
+   Confirmed against `scripts/dgox/events.py`: `_VALID_EVENT_TYPES` reserves
+   `run_start`/`run_end`; envelope `run_id` is optional-non-empty-when-present. AC-7.
+6. **Emitter bound to `metrics_lib`'s EXACT field names** — checked
+   `scripts/metrics_lib.py` directly: `run_end` is read for `outcome`, `model`, `merged_pr`,
+   `ci_status`, `t7_pass`, `t7_score`; `recovery_drill` for `outcome=="success"` + `corrupted`,
+   keyed by `run_id`. ADR §4's binding constraint matches the reader **byte-for-byte** — a
+   rename would leave the T-gates silently inert, and the ADR calls that out + requires a
+   schema-conformance test in DAS-1443. This is the highest-risk item and it is correct.
+7. **§9 approved defaults cited** — §5 cites Founder-approved (2026-07-03) cadence
+   (one/​wave boundary, §4 WS1), gitignore/retention (O1-T01 / O4-T05), and the preserved
+   operator-invocation contract (§9 item 3, "NOT a daemon"). AC-8.
+8. **Format + README** — mirrors 0022 (`# ADR 0023 —`, `**Status:**`/`**Date:**`,
+   Context/Decision/Consequences); README.md carries the 0023 index row + a new "Durable
+   execution — ORGANISM WS1 PULSE" theme paragraph. AC-1/AC-2.
+
+**GATE-1 checklist mapping.** This ADR is ONE Planning artifact within WS1, not the whole
+program gate. It fully satisfies the two checklist items in its remit — **scope boundaries
+explicit** (ADR-only, EXTEND-not-fork, consumer tickets named) and **data/technical
+feasibility confirmed** (rides the existing event store, no new deps, stated reconstruction
+path). The remaining GATE-1 items — measurable business KPI baseline, finance-analyst token/
+infra budget, legal-analyst risk-ethics sign-off — are **deferred to sibling program-plan
+Planning artifacts owned by senior-pm / finance-analyst / legal-analyst**; they are out of
+scope for this engine-internal ADR and are NOT a reason to block it (AADL §0: engine tooling
+carries the methodology without the customer-agent-specific artifacts).
+
+Decision: all acceptance criteria met, all load-bearing claims verified against code — I do
+not return a deficient Planning artifact. `status: done`. Note: under the Founder's local-only
+directive, "done" here = green local validators (diagnostics/board_lint per the CTO log) + this
+GATE-1 review — no PR / no CI (the ADR is committed to local main). Consumer tickets
+DAS-1443 / DAS-1444 / DAS-1445 may now proceed on `adr-0023`; DAS-1443 inherits the hard
+field-name contract + the required schema-conformance test.
