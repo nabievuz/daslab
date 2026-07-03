@@ -1,8 +1,8 @@
 ---
 id: DAS-1454
 title: Span-events builder/validator (gen_ai.* attrs) in dgox/events.py (P11)
-status: todo
-assignee: backend-em
+status: in_review
+assignee: cto
 author: ceo
 dept: engineering
 priority: p1
@@ -102,3 +102,20 @@ source of truth for valid types.
 Created from ORGANISM program-plan decomposition (/daslab-plan). Spec-of-record: docs/research/ORGANISM-PROGRAM-PLAN.md.
 
 AADL stage: GATE-3 Development. Consumes: adr-0024, typed-run-events (DAS-1453/DAS-1443). Produces: span-builder (consumed by DAS-1455/1456). Extends scripts/dgox/events.py in-place following the routing_decision / agent_invocation builder+validator pattern; registers span kind(s) in `_VALID_EVENT_TYPES`; tests mirror tests/test_dgox_events.py.
+
+### 2026-07-03 — Backend EM
+Built the span shape (Shape H) per ADR-0024 — EXTEND, in `scripts/dgox/events.py` only, mirroring the existing builder+validator pattern. No new module/class/store.
+
+- Registered `"span"` in the module-level `_VALID_EVENT_TYPES` frozenset (so `validate_envelope` accepts it and `EventStore.append` writes it).
+- Added keyword-only `build_span(...)` returning a plain dict with the OTel GenAI semantic-convention names as JSON keys. `trace_id` is derived (:= `ticket_id`), `duration_ms` is derived (:= `end - start` in ms, pure — no clock read), and `cached` is derived (:= `cached_input_tokens > 0`). `created_at`/`start`/`end` are caller-supplied (injectable; no `utcnow()` inside). Optional `run_id`.
+- Added `validate_span(event) -> list[str]` (envelope-first, never raises): pins `event_type == "span"`, `trace_id == ticket_id`, non-empty `span_id`, `parent_span_id` null(root)-or-non-empty-string, `kind ∈ {invoke_agent,chat,execute_tool,wave,run}`, `status ∈ {ok,error}`, non-empty `gen_ai.agent.name`/`gen_ai.request.model`, non-empty `start`/`end`, non-negative-int `duration_ms` equal to derived `end - start`, non-negative-int token counts, and `cached == (cached_input_tokens > 0)`.
+- Exposed `SPAN_KINDS`, `SPAN_STATUSES`, `SPAN_OTEL_ATTRS` (mapping single-source-of-truth), `_SPAN_REQUIRED`.
+- Tests: added `TestSpan` (+ `_make_span_event` factory) to `tests/test_dgox_events.py` — build-shape, OTel-name mapping asserted (and no ad-hoc alias leaks), derived-field checks, all-kinds/all-statuses valid, and ~15 malformed-rejection cases, plus a root→child append→`iter_events` round-trip via `tmp_path`.
+
+OTel name mapping (JSON key → OTel attr): `kind`→`gen_ai.operation.name`; `gen_ai.agent.name`→verbatim; `gen_ai.request.model`→verbatim (carries tier/model, one axis); `gen_ai.usage.input_tokens`/`output_tokens`/`cached_input_tokens`→verbatim; `trace_id`/`span_id`/`parent_span_id`→OTel Span core; `duration_ms`→`daslab.span.duration_ms` (derived); `cached`→`daslab.usage.cached`; `status`→OTel span status (OK/ERROR).
+
+VERIFY (all green): `pytest tests/test_dgox_events.py` = 104 passed; `ruff check scripts tests` = clean; `diagnostics.py` = 100/100; `board_lint.py` = 0 violations. Files touched: `scripts/dgox/events.py`, `tests/test_dgox_events.py` only.
+
+Status → in_review; assignee → cto (my manager; never self-review — I authored the code). LOCAL-ONLY per ORGANISM policy: committed on branch feat/das-1454-span-events, no push/PR.
+
+Routing: CTO to review (GATE-3). Downstream DAS-1455/1456 can now emit/consume typed spans.
