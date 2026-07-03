@@ -103,12 +103,55 @@ def test_bad_status_fires() -> None:
 
 
 def test_valid_statuses_are_accepted() -> None:
-    valid = ("backlog", "todo", "in_progress", "blocked", "in_review", "done")
+    valid = (
+        "backlog", "todo", "in_progress", "blocked", "in_review", "done",
+        "interrupted",
+    )
     for s in valid:
         ticket = make_ticket(status=s, assignee="qa-lead", author="ceo")
         errors = run_lint([ticket])
         status_errors = [e for e in errors if "invalid status" in e]
         assert not status_errors, f"Status '{s}' unexpectedly flagged: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# R1 (interrupted) — new 'interrupted' status (DAS-1446)
+# ---------------------------------------------------------------------------
+
+
+def test_interrupted_status_accepted() -> None:
+    """A well-formed 'interrupted' ticket must lint clean (DAS-1446 positive)."""
+    ticket = make_ticket(status="interrupted", assignee="backend-eng-1", author="ceo")
+    errors = run_lint([ticket])
+    assert not errors, errors
+
+
+def test_interrupted_not_subject_to_self_review_r8() -> None:
+    """R8 is scoped to in_review; an 'interrupted' ticket with assignee == author
+    must NOT be flagged as self-review (DAS-1446 consumer sweep, R8 untouched)."""
+    ticket = make_ticket(status="interrupted", assignee="qa-eng", author="qa-eng")
+    errors = run_lint([ticket])
+    assert not any("self-review" in e for e in errors), errors
+
+
+def test_unknown_status_still_rejected() -> None:
+    """The enum stays closed: an unknown status is still rejected (DAS-1446
+    negative — 'interrupted' did not open the gate to arbitrary values)."""
+    ticket = make_ticket(status="interupted")  # typo, not the real value
+    errors = run_lint([ticket])
+    assert any("invalid status" in e for e in errors), errors
+
+
+def test_load_tickets_interrupted_file(tmp_path: Path) -> None:
+    """An 'interrupted' ticket written to disk lints clean via load_tickets —
+    exercises the real linter end-to-end (DAS-1446 acceptance)."""
+    fm = make_ticket(
+        id="DAS-9004", status="interrupted", assignee="backend-eng-1", author="ceo"
+    )
+    make_ticket_file(tmp_path, fm)
+    loaded = load_tickets(tmp_path)
+    errors = lint_tickets(loaded, _KNOWN_ROLES)
+    assert not errors, errors
 
 
 # ---------------------------------------------------------------------------
