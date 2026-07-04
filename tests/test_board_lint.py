@@ -647,6 +647,54 @@ def test_distinct_program_token_is_noop(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# W11 — a `status: <status>` line in the ticket BODY (DAS-1507); non-fatal warning
+# ---------------------------------------------------------------------------
+
+
+def test_body_status_line_warns(tmp_path: Path) -> None:
+    from board_lint import warn_body_status_lines
+
+    fm = make_ticket()
+    p = make_ticket_file(tmp_path, fm)
+    # a line in the BODY that mimics the frontmatter field with a real status value.
+    p.write_text(p.read_text(encoding="utf-8") + "\nstatus: done\n", encoding="utf-8")
+    warns = warn_body_status_lines([(p, fm)])
+    assert len(warns) == 1 and "DAS-1507" in warns[0]
+
+
+def test_body_prose_without_status_value_no_warn(tmp_path: Path) -> None:
+    from board_lint import warn_body_status_lines
+
+    fm = make_ticket()
+    p = make_ticket_file(tmp_path, fm)
+    # not a line-start status field, and not a valid status value -> no warn.
+    p.write_text(
+        p.read_text(encoding="utf-8") + "\nThe rollout status: some free prose here\n",
+        encoding="utf-8",
+    )
+    assert warn_body_status_lines([(p, fm)]) == []
+
+
+def test_body_status_warning_is_non_fatal(tmp_path: Path) -> None:
+    # W11 must never change the exit code — it is informational only.
+    import board_lint
+
+    board = tmp_path / "tickets"
+    board.mkdir()
+    p = make_ticket_file(board, make_ticket())
+    p.write_text(p.read_text(encoding="utf-8") + "\nstatus: done\n", encoding="utf-8")
+    routing = tmp_path / "ROUTING.md"
+    routing.write_text(
+        "# Role routing\n\n| Role key | Display | Dept | Reports to |\n|---|---|---|---|\n"
+        "| `qa-eng` | QA Engineer | engineering | QA Lead |\n"
+        "| `ceo` | CEO | governance | Chairman |\n",
+        encoding="utf-8",
+    )
+    rc = board_lint.main(["--board", str(board), "--routing", str(routing)])
+    assert rc == 0  # the body-status WARNING must not fail the lint
+
+
+# ---------------------------------------------------------------------------
 # Tolerant reader — _schema_names_of
 # ---------------------------------------------------------------------------
 

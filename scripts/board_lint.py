@@ -522,6 +522,40 @@ def warn_interrupted_idempotency(
 
 
 # ---------------------------------------------------------------------------
+# Body-prose warnings (W11 — DAS-1507: a `status:`-like line in the body)
+# ---------------------------------------------------------------------------
+
+
+def warn_body_status_lines(
+    tickets: list[tuple[Path, dict[str, str]]],
+) -> list[str]:
+    """Warn when a ticket BODY (outside frontmatter) carries a line like
+    ``status: <valid-status>`` — DAS-1507-style prose that mimics the frontmatter
+    field and can confuse a line-based reader (e.g. the interrupt round-trip's
+    ``status: interrupted`` scan). WARNING, not an error — exit code unaffected.
+    Scoped to a real status value so ordinary "status:" prose does not false-warn.
+    """
+    status_alt = "|".join(re.escape(s) for s in sorted(VALID_STATUSES))
+    body_status_re = re.compile(rf"(?mi)^status:[^\S\n]*(?:{status_alt})\b")
+    warnings: list[str] = []
+    for path, fm in tickets:
+        ticket_label = fm.get("id") or path.name
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        body = _FM_RE.sub("", text, count=1)
+        if body_status_re.search(body):
+            warnings.append(
+                f"{ticket_label}: a 'status: <status>' line appears in the ticket "
+                "BODY (outside frontmatter) — this prose mimics the frontmatter "
+                "field and can confuse line-based readers; reword or backtick it "
+                "(DAS-1507)"
+            )
+    return warnings
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -588,6 +622,16 @@ def main(argv: list[str] | None = None) -> int:
             f"(non-fatal — fix before re-dispatching interrupted tickets):"
         )
         for w in idempotency_warnings:
+            print(f"  WARN  {w}")
+
+    # W11 — a `status: <status>` line in the ticket BODY (DAS-1507); informational.
+    body_status_warnings = warn_body_status_lines(tickets)
+    if body_status_warnings:
+        print(
+            f"board_lint: {len(body_status_warnings)} body-status warning(s) "
+            "(non-fatal — reword prose that mimics the status frontmatter field):"
+        )
+        for w in body_status_warnings:
             print(f"  WARN  {w}")
 
     print(f"board_lint: OK — {len(tickets)} ticket(s) checked, 0 violations.")
