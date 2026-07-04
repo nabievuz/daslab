@@ -628,6 +628,24 @@ def test_non_finale_missing_contracts_is_noop(tmp_path: Path) -> None:
     assert _r11_errors(make_ticket(program="qaqnuz"), d) == []
 
 
+def test_finale_marker_inline_comment_and_quote_still_fire(tmp_path: Path) -> None:
+    # The confirmed bypass: a trailing inline YAML comment or a stray quote must NOT
+    # let a FINALE ticket lint clean without contracts (the permissive frontmatter
+    # parser keeps the comment in the raw value, so exact-equality silently missed it).
+    d = _make_schemas_dir(tmp_path, "task-ledger")
+    for marker in ("finale  # gated build", '"finale', "finale extra"):
+        errors = _r11_errors(make_ticket(program=marker), d)
+        assert any("program: finale requires" in e for e in errors), f"bypass via {marker!r}"
+
+
+def test_distinct_program_token_is_noop(tmp_path: Path) -> None:
+    # A genuinely different single-token program stays fail-open (only `finale` fires).
+    d = _make_schemas_dir(tmp_path, "task-ledger")
+    assert not any(
+        "program: finale requires" in e for e in _r11_errors(make_ticket(program="finale-v2"), d)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tolerant reader — _schema_names_of
 # ---------------------------------------------------------------------------

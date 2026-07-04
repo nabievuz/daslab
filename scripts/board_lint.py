@@ -424,9 +424,12 @@ def lint_tickets(
         # well-formed). This is the one place the typed-contract discipline is
         # fail-closed rather than optional, and it fires ONLY for the FINALE
         # program marker — so every non-FINALE ticket lints exactly as before.
-        # The marker is matched case-insensitively on a bare token to dodge the
-        # permissive-frontmatter colon/bracket parse gotcha.
-        if fm.get("program", "").strip().lower() == "finale":
+        # Match the FIRST whitespace-delimited token after stripping quotes, so an
+        # inline YAML comment (`program: finale  # note`) or a stray quote cannot
+        # bypass this fail-closed gate — the permissive frontmatter parser keeps the
+        # trailing comment in the raw value, so exact-equality would silently miss it.
+        _program = fm.get("program", "").strip().strip("\"'").split()
+        if _program and _program[0].lower() == "finale":
             for contract_key in ("produces", "consumes"):
                 names = (
                     _schema_names_of(fm, contract_key) if contract_key in fm else []
