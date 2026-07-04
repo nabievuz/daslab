@@ -110,6 +110,10 @@ def test_run_summary_written_with_inlined_evidence(tmp_path: Path) -> None:
     assert evidence["gate_walk"]["gates_walked"] == [1, 2, 3, 4, 5, 6]
     assert evidence["gate_walk"]["all_goals_all_gates_done"] is True
     assert evidence["gate_walk"]["violations"] == []
+    # the gate-order checker is proven to DISCRIMINATE (fires on a forced out-of-order
+    # state) — so the clean walk above is meaningful, not vacuously empty.
+    assert evidence["gate_walk"]["negative_probe"]["fired"] is True
+    assert evidence["gate_walk"]["negative_probe"]["forced_stage"] >= 2
 
     # every compiled goal reached done on all six gates.
     for stages in evidence["gate_walk"]["gate_states"].values():
@@ -145,10 +149,17 @@ def test_d5_health_check_recorded_honestly(tmp_path: Path) -> None:
     assert health["pack_tests"]["passed"] is None
     # the checklist labels EXACTLY what was checked, and every applicable check passed.
     checklist = health["checklist"]
-    assert len(checklist) == 5
+    assert len(checklist) == 6  # + the gate-order negative probe
     assert all(item["ok"] in (True, None) for item in checklist)
     assert any("board_lint on the delivered board" in item["label"] for item in checklist)
     assert any("gate-walk" in item["label"] for item in checklist)
+    assert any("negative probe" in item["label"] for item in checklist)
+    # the gate-order checker is proven able to fire (not a vacuous always-empty check).
+    assert health["negative_probe"]["fired"] is True
+    # the recorded probe command is the REAL (ephemeral) argv, honestly flagged — not
+    # a fabricated non-runnable "(delivered)" label.
+    assert health["probe"]["ephemeral"] is True
+    assert "(delivered)" not in " ".join(health["probe"]["command"])
 
     # the rendered checklist marks the not-run pack tests as an unticked box.
     assert "- [ ] pack-shipped tests: pack ships no runnable test suite" in text

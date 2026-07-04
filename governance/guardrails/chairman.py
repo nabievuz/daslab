@@ -36,7 +36,7 @@ _RULING_RECORDED = re.compile(
     r"decid(?:e|ed|es)|decision|ratif(?:y|ied|ies)|resolv(?:e|ed)|resolution|"
     r"adopt(?:ed|s)?|uphold|upheld|overrul(?:e|ed|es)|"
     r"sign[- ]?off|signed[- ]?off|"
-    r"board[- ]?minute|minutes|ADR|approved[- ]?queue|"
+    r"board[- ]?minutes?|ADR|approved[- ]?queue|"
     r"TASDIQLANDI"
     r")\b",
     re.IGNORECASE,

@@ -60,6 +60,15 @@ def test_cached_input_tokens_alias() -> None:
     assert tu.cached_input_tokens == 9
 
 
+def test_present_but_none_alias_falls_through() -> None:
+    # A present-but-null preferred alias must not mask a real later alias (no silent drop).
+    tu = parse_usage(
+        {"cache_read_input_tokens": None, "cached_input_tokens": 200, "input_tokens": 100, "output_tokens": 50}
+    )
+    assert tu.cached_input_tokens == 200
+    assert parse_usage({"input_tokens": None, "prompt_tokens": 7, "output_tokens": 1}).input_tokens == 7
+
+
 def test_extra_keys_ignored() -> None:
     tu = parse_usage(
         {"input_tokens": 1, "output_tokens": 2, "service_tier": "standard", "foo": "bar"}

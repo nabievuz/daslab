@@ -20,6 +20,7 @@ import json
 import socketserver
 import sys
 import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -85,22 +86,23 @@ def test_roundtrip_resume_under_60s(tmp_path: Path) -> None:
     ticket_id = "DAS-7001"
 
     card_path = _write_card(interrupts, ticket_id, ["ship", "hold"], "DAS-7001-stall-1")
-    card_created = card_path.stat().st_mtime
 
     # Founder answers by writing resume:<value> into the ticket body.
-    ticket_path = _write_interrupted_ticket(board, ticket_id, resume_value="hold")
-    answered = ticket_path.stat().st_mtime
+    _write_interrupted_ticket(board, ticket_id, resume_value="hold")
 
+    # R7 latency evidence: time the ACTUAL answer->detect->resume machinery (not two
+    # adjacent file mtimes) and assert it runs far under the 60s answer affordance.
+    start = time.perf_counter()
     resumed = irt.detect_resumed_tickets(board, interrupts)
+    elapsed = time.perf_counter() - start
+
     assert len(resumed) == 1
     rt = resumed[0]
     assert rt.ticket_id == ticket_id
     assert rt.resume_value == "hold"
     assert rt.card_path == card_path
     assert "hold" in rt.injection_text and "RESUME CONTEXT" in rt.injection_text
-
-    # R7 timing evidence: the create→answer round-trip completes well under 60s.
-    assert abs(answered - card_created) < 60.0
+    assert elapsed < 5.0
 
 
 def test_invalid_resume_value_is_skipped(tmp_path: Path) -> None:

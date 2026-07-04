@@ -51,6 +51,10 @@ from _paths import ROOT as REPO_ROOT
 #: Trailing output lines kept per gate (surfaced for failed rows / JSON).
 TAIL_LINES = 12
 
+#: Per-gate wall-clock cap (seconds). A gate that exceeds it is a FAIL (rc 124),
+#: never an unbounded battery hang — generous enough for the full pytest + drills.
+DEFAULT_GATE_TIMEOUT = 1800
+
 
 @dataclass(frozen=True)
 class Gate:
@@ -130,6 +134,7 @@ def run_battery(
     *,
     cwd: Path = REPO_ROOT,
     stream: bool = True,
+    timeout: float = DEFAULT_GATE_TIMEOUT,
 ) -> tuple[list[GateResult], int]:
     """Run each gate in order and report a PASS/FAIL/INFO table + aggregate rc.
 
@@ -148,13 +153,21 @@ def run_battery(
         print(_render_header(len(gates)))
 
     for idx, gate in enumerate(gates, start=1):
-        proc = subprocess.run(  # noqa: S603 - fixed, in-repo argv from build_battery
-            gate.argv,
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-        )
-        rc = proc.returncode
+        try:
+            proc = subprocess.run(  # noqa: S603 - fixed, in-repo argv from build_battery
+                gate.argv,
+                cwd=str(cwd),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            rc = proc.returncode
+            tail = _tail(_combine(proc.stdout, proc.stderr))
+        except subprocess.TimeoutExpired as exc:
+            # A hanging gate is a FAIL (rc 124), never an unbounded battery hang.
+            rc = 124
+            partial = _combine(exc.stdout or "", exc.stderr or "")
+            tail = _tail(f"{partial}\n[timed out after {timeout:g}s]")
         if rc == 0:
             status = "PASS"
         elif gate.informational:
@@ -167,7 +180,7 @@ def run_battery(
             rc=rc,
             informational=gate.informational,
             status=status,
-            tail=_tail(_combine(proc.stdout, proc.stderr)),
+            tail=tail,
         )
         results.append(result)
         if stream:

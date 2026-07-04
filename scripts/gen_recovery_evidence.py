@@ -68,11 +68,21 @@ def _render_summary(kill: dict, fork: dict, generated_at: str) -> str:
     }
     verdict = "PASS" if proof["overall_ok"] else "MISS"
     proof_json = json.dumps(proof, indent=2, ensure_ascii=False)
+    if proof["overall_ok"]:
+        intro = (
+            "One REAL interrupted run (SIGKILL mid-wave-2) resumed with zero loss through "
+            "the production `wave_runner.run_wave` path, plus a time-travel fork drill "
+            "proving the base run byte-identical (R1 durable execution)."
+        )
+    else:
+        intro = (
+            "A recovery drill was run through the production `wave_runner.run_wave` path but "
+            "did NOT hold (see the failing invariants below). This receipt records the MISS "
+            "honestly; it does NOT assert a successful recovery."
+        )
     return (
         f"# Recovery drill evidence — {verdict}\n\n"
-        "One REAL interrupted run (SIGKILL mid-wave-2) resumed with zero loss "
-        "through the production `wave_runner.run_wave` path, plus a time-travel fork "
-        "drill proving the base run byte-identical (R1 durable execution).\n\n"
+        f"{intro}\n\n"
         f"- generated_at: `{generated_at}`\n"
         f"- kill-drill run_id: `{kill.get('run_id')}`\n"
         f"- killed (real SIGKILL mid-wave-2): **{kill.get('killed')}**\n"

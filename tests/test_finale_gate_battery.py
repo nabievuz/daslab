@@ -112,3 +112,30 @@ def test_list_mode_returns_zero() -> None:
 
 def test_list_json_mode_returns_zero() -> None:
     assert fgb.main(["--list", "--json"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# A hanging gate must FAIL (rc 124), never hang the battery unboundedly
+# ---------------------------------------------------------------------------
+
+
+def _slow(name: str, *, informational: bool = False) -> fgb.Gate:
+    """A seeded gate that sleeps longer than the test timeout."""
+    return fgb.Gate(name, ["python3", "-c", "import time;time.sleep(30)"], informational=informational)
+
+
+def test_hanging_required_gate_times_out_as_fail() -> None:
+    results, rc = fgb.run_battery([_ok("a"), _slow("stuck")], stream=False, timeout=0.5)
+    assert rc == 1
+    stuck = next(r for r in results if r.name == "stuck")
+    assert stuck.status == "FAIL"
+    assert stuck.rc == 124
+    assert "timed out" in stuck.tail
+
+
+def test_hanging_informational_gate_times_out_without_failing_battery() -> None:
+    results, rc = fgb.run_battery([_ok("a"), _slow("readiness", informational=True)], stream=False, timeout=0.5)
+    assert rc == 0
+    info = next(r for r in results if r.name == "readiness")
+    assert info.status == "INFO"
+    assert info.rc == 124

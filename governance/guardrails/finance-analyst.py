@@ -36,7 +36,15 @@ _FINANCE_TERMS = re.compile(
 
 # Positive evidence of a numeric metric: a currency amount, a percentage, or any
 # bare number. Tolerant on purpose — any real figure satisfies it.
-_NUMERIC = re.compile(r"(?:\$\s?\d|\d+(?:[.,]\d+)?\s?%|\b\d[\d,.]*\b)")
+# A METRIC-shaped figure (currency, percentage, or a number next to a money unit)
+# — NOT a lone digit, so an incidental ticket id / bare year does not satisfy the
+# "must report a figure" gate.
+_NUMERIC = re.compile(
+    r"(?i)(?:"
+    r"\$\s?\d|\d+(?:[.,]\d+)?\s?%"
+    r"|\b\d[\d,.]*\s?(?:usd|dollars?|eur|gbp|k|m|bn|mo|x)\b"
+    r")"
+)
 
 
 def input_guardrail(ctx: GuardrailContext) -> GuardrailResult:

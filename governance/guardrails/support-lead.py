@@ -33,6 +33,13 @@ _RESOLUTION = re.compile(
     re.IGNORECASE,
 )
 
+# An explicitly UNRESOLVED / still-open state that must trip even when a resolution
+# verb appears in a NEGATED or future sense ("not yet resolved", "no workaround").
+_UNRESOLVED = re.compile(
+    r"(?i)\b(?:not (?:yet )?(?:resolv|triag|clos|dispatch)\w*|unresolved|"
+    r"still (?:investigating|open|pending|unresolved)|no (?:workaround|resolution|fix)\b)",
+)
+
 
 def input_guardrail(ctx: GuardrailContext) -> GuardrailResult:
     """Support triage accepts any in-department, gate-clear operations ticket."""
@@ -45,6 +52,12 @@ def output_guardrail(ctx: GuardrailContext) -> GuardrailResult:
     if not ok:
         return (ok, feedback)
     output = (ctx.output or "").strip()
+    if _UNRESOLVED.search(output):
+        return trip(
+            "still unresolved: the output reports the item as not yet resolved / "
+            "still open (a negated or future disposition); an accepted support "
+            "deliverable must record an actual triage / resolution / routing outcome."
+        )
     if not _RESOLUTION.search(output):
         return trip(
             "no resolution recorded: a support deliverable must show the item was "

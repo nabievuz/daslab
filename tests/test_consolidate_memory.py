@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).parent.parent
@@ -100,3 +101,33 @@ def test_real_config_has_ranking_block() -> None:
     assert "ranking" in cfg
     for key in ("w_sim", "w_recency", "w_importance", "half_life_days"):
         assert key in cfg["ranking"], f"ranking.{key} missing from memory_governance.yaml"
+
+
+def test_microsecond_timestamp_recency_not_collapsed() -> None:
+    # The live outbox writes microsecond stamps; recency must still distinguish
+    # a recent memory from an old one (the bug: parse_iso returned None -> recency 0).
+    recent = cm.normalize({"memory": "alpha recall note", "ts": "2026-07-01T11:59:00.614434Z"}, 0)
+    old = cm.normalize({"memory": "alpha recall note", "ts": "2026-01-01T00:00:00.123456Z"}, 1)
+    assert recent["created_at"] == "2026-07-01T11:59:00Z"  # normalized to a parse_iso form
+    rep = cm.consolidate([recent, old], query="alpha recall note", now=_NOW, config=_CONFIG, top_k=2)
+    comp = {r["id"]: r["composite"] for r in rep["ranked"]}
+    assert comp["outbox-0"] > comp["outbox-1"]  # recent ranks above old -> recency term alive
+
+
+def test_offset_timestamp_normalized() -> None:
+    m = cm.normalize({"memory": "x", "ts": "2026-06-24T19:56:15+00:00"}, 0)
+    assert m["created_at"] == "2026-06-24T19:56:15Z"
+
+
+def test_unparseable_now_errors(tmp_path: Path) -> None:
+    store = _store(tmp_path, [{"memory": "x", "ts": "2026-07-01T00:00:00Z"}])
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text(yaml.safe_dump(_CONFIG), encoding="utf-8")
+    with pytest.raises(SystemExit):  # a supplied-but-bad --now must fail, not silently use wall-clock
+        cm.main(["--store", str(store), "--config", str(cfg), "--now", "not-a-timestamp"])
+
+
+def test_null_trust_score_does_not_crash() -> None:
+    m = cm.normalize({"memory": "x", "ts": "2026-07-01T00:00:00Z", "trust_score": None}, 0)
+    assert m["trust_score"] == 0.5  # default applied for a present-but-null field
+    cm.consolidate([m], query="x", now=_NOW, config=_CONFIG)  # must not raise

@@ -35,7 +35,16 @@ _METRIC_TERMS = re.compile(
 )
 
 # Positive evidence that the analysis carries a numeric value (any digit).
-_NUMERIC = re.compile(r"\d")
+# A METRIC-shaped number (percentage, currency, or a count next to a metric unit)
+# — NOT a lone digit, so an incidental ticket id (DAS-1500) or bare year no longer
+# satisfies "cite a measured figure".
+_NUMERIC = re.compile(
+    r"(?i)(?:"
+    r"\$\s?\d|\d+(?:[.,]\d+)?\s?%"
+    r"|\b\d[\d,.]*\s?(?:x|percent|users?|dau|mau|wau|sessions?|signups?|"
+    r"conversions?|installs?|clicks?|pts|bps|k|m|bn)\b"
+    r")"
+)
 
 
 def input_guardrail(ctx: GuardrailContext) -> GuardrailResult:

@@ -29,7 +29,7 @@ ROLE = "backend-em"
 _REVIEW_DECISION = re.compile(
     r"\b(approv(?:e|ed|al)|lgtm|merg(?:e|ed|ing)|"
     r"request(?:ing|ed)?[- ]?changes|changes[- ]?requested|change[- ]?request|"
-    r"return(?:ed|ing)?|block(?:ed)?|reject(?:ed)?|needs[- ]?work|"
+    r"returned[- ]to[- ]author|reject(?:ed)?|needs[- ]?work|"
     r"sign(?:ed)?[- ]?off)\b",
     re.IGNORECASE,
 )

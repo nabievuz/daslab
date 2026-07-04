@@ -54,8 +54,8 @@ it does not touch the loop).
   <key>KeepAlive</key><true/>
   <key>RunAtLoad</key><false/>
   <key>WorkingDirectory</key><string>/path/to/daslab</string>
-  <key>StandardOutPath</key><string>/var/log/daslab/cockpit.log</string>
-  <key>StandardErrorPath</key><string>/var/log/daslab/cockpit-err.log</string>
+  <!-- To capture logs to a file, add StandardOutPath / StandardErrorPath keys with an
+       absolute, user-writable path (pre-created) — a per-user agent cannot write /var/log. -->
 </dict>
 </plist>
 ```
@@ -64,6 +64,11 @@ it does not touch the loop).
 launchctl load   ~/Library/LaunchAgents/com.daslab.cockpit.plist   # start
 launchctl unload ~/Library/LaunchAgents/com.daslab.cockpit.plist   # stop (disable live page)
 ```
+
+> By default launchd sends the job's output to the unified system log. To capture it
+> to a file, add `StandardOutPath`/`StandardErrorPath` keys with an absolute,
+> user-writable path (pre-created) — a per-user LaunchAgent runs as you and cannot
+> write root-owned `/var/log`.
 
 ### Linux — systemd user unit (`~/.config/systemd/user/daslab-cockpit.service`)
 

@@ -176,6 +176,36 @@ def _drive_to_done(board: Path) -> dict:
     }
 
 
+def _negative_gate_probe(board: Path) -> dict:
+    """Prove ``gate_order_violations`` actually DISCRIMINATES (is not vacuously empty).
+
+    On the freshly-compiled board every stage ticket is still ``todo`` (so GATE-1 is
+    open); force ONE stage>=2 ticket to ``done`` IN MEMORY and assert the checker
+    FIRES. Without this, the clean walk in ``_drive_to_done`` proves only the driver's
+    own ordering discipline — because it advances stages strictly 1->6, an order
+    violation can never arise — not that the rule can ever catch a real violation.
+    Must be called on the pre-drive (still-``todo``) board.
+    """
+    tickets = board_lint.load_tickets(board)
+    for path, fm in tickets:
+        stage = sg.stage_of(fm)
+        if stage is not None and stage >= 2:
+            mutated = [
+                (p, {**f, "status": _DONE} if p == path else f) for p, f in tickets
+            ]
+            violations = sg.gate_order_violations(mutated)
+            return {
+                "fired": bool(violations),
+                "forced_ticket": fm.get("id"),
+                "forced_stage": stage,
+                "sample_violation": violations[0] if violations else None,
+                "verifies": "gate_order_violations flags a stage>=2 ticket advanced "
+                            "while its predecessor gate is still open",
+            }
+    return {"fired": False, "forced_ticket": None,
+            "note": "no stage>=2 ticket available to probe"}
+
+
 # --------------------------------------------------------------------------- #
 # Step 3 — D-5 LOCAL deploy evidence (workspace + tests + health-check probe)
 # --------------------------------------------------------------------------- #
@@ -217,7 +247,6 @@ def _health_check(
     *,
     board: Path,
     scratch_pack: Path,
-    slug: str,
     run_id: str,
     runs_dir: Path,
     walk_evidence: dict,
@@ -240,8 +269,14 @@ def _health_check(
     lint_violations = board_lint.lint_tickets(tickets, known_roles)
     lint_clean = lint_violations == []
 
-    # (2) gate walk complete + clean.
-    gate_walk_clean = walk_evidence["all_goals_all_gates_done"] and not walk_evidence["violations"]
+    # (2) gate walk complete + clean AND the gate-order checker proven able to fire
+    # (negative probe), so a clean walk is meaningful rather than vacuous.
+    negative_probe = walk_evidence.get("negative_probe", {})
+    gate_walk_clean = (
+        walk_evidence["all_goals_all_gates_done"]
+        and not walk_evidence["violations"]
+        and bool(negative_probe.get("fired"))
+    )
 
     # (3) run workspace + local artifact staging.
     workspace = run_workspace.create_workspace(run_id, runs_dir)
@@ -272,10 +307,14 @@ def _health_check(
         {"ok": lint_clean,
          "label": f"board_lint on the delivered board: {len(tickets)} tickets, "
                   f"{len(lint_violations)} violation(s)"},
-        {"ok": gate_walk_clean,
+        {"ok": (walk_evidence["all_goals_all_gates_done"] and not walk_evidence["violations"]),
          "label": "all six AADL gates (GATE-1..GATE-6) walked to done for every goal; "
                   f"{len(walk_evidence['violations'])} gate-order/deploy violation(s) "
                   "across the walk"},
+        {"ok": bool(negative_probe.get("fired")),
+         "label": "gate-order checker proven to fire (negative probe): a forced "
+                  f"out-of-order state (a stage-{negative_probe.get('forced_stage')} "
+                  "ticket advanced while its predecessor gate is open) is flagged"},
         {"ok": workspace_created,
          "label": f"run workspace created and delivered board staged as the LOCAL "
                   f"artifact ({run_id}/workspace/delivered-board — scratch, gitignored)"},
@@ -300,11 +339,17 @@ def _health_check(
         "workspace_path": _display_path(workspace),
         "local_artifact": _display_path(artifact),
         "probe": {
-            "command": ["python3", "scripts/gateway_compile.py", f"{slug}(delivered)", "--gate-walk"],
+            "command": ["python3", "scripts/gateway_compile.py",
+                        f"<ephemeral-scratch>/{scratch_pack.name}", "--gate-walk"],
+            "ephemeral": True,
+            "note": "the pack arg was an ephemeral scratch copy (gc'd after the run; the "
+                    "literal path is machine-specific and intentionally elided); "
+                    "reproduce via `python3 scripts/e2e_run.py <pack_dir>`",
             "returncode": probe.returncode,
             "exit_ok": probe_ok,
             "verifies": "gate-walk CLI over the delivered board: 0 => board may advance",
         },
+        "negative_probe": negative_probe,
         "pack_tests": pack_tests,
         "checklist": checklist,
     }
@@ -360,8 +405,10 @@ def _write_run_summary(runs_dir: Path, run_id: str, evidence: dict) -> Path:
         f"{compiled['ticket_count']} self-contained stage-gated story tickets "
         f"({ticket_word}; every board file is compiler output).",
         "2. `stage_gate.gate_order_violations` / `production_deploy_violations` — "
-        "drove every stage ticket to `done` in gate order (Stage 1->6); no stage "
-        "advanced past an open predecessor gate at any step.",
+        "drove every stage ticket to `done` in gate order (Stage 1->6) with no order "
+        "violation at any step, and a NEGATIVE PROBE separately confirms the checker "
+        "fires on a forced out-of-order state (so the clean walk is meaningful, not "
+        "vacuous).",
         "3. `run_workspace.create_workspace` — created the run workspace and staged "
         "the delivered board as the LOCAL D-5 artifact (scratch, gitignored, gc'd).",
         "4. `board_lint.lint_tickets` + a `gateway_compile --gate-walk` probe — "
@@ -431,14 +478,16 @@ def e2e_run(
         produced = {p.resolve() for p in res.tickets}
         hand_written = sorted(p.name for p in on_disk - produced)
 
-        # Step 2 — drive to done in gate order.
+        # Step 2 — prove the gate-order checker discriminates (negative probe on the
+        # still-`todo` board), then drive to done in gate order.
+        negative_probe = _negative_gate_probe(board)
         walk_evidence = _drive_to_done(board)
+        walk_evidence["negative_probe"] = negative_probe
 
         # Step 3 — D-5 LOCAL deploy evidence (creates + uses the run workspace).
         health = _health_check(
             board=board,
             scratch_pack=scratch_pack,
-            slug=slug,
             run_id=run_id,
             runs_dir=runs_dir,
             walk_evidence=walk_evidence,

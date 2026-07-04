@@ -51,7 +51,7 @@ VECTORS: list[tuple[str, str, str]] = [
      "Reviewed PR #42 against the acceptance criteria; CI is green. Approved and merged via GATE-3.",
      "Read through the diff for the payment module; the implementation looks reasonable overall and follows our conventions."),
     ("backend-eng-2",
-     "Implemented the retry backoff and added pytest cases; the full suite passed and CI is green. All acceptance criteria checked.",
+     "Reproduced the failing test, fixed the broken pagination, and added a regression test; the full suite passed and CI is green.",
      "Wrote the new /orders endpoint and wired it into the router; shipped the handler."),
     ("cto",
      "ADR-0031 recorded: selected the dispatch event-emitter over polling; rationale and law-check captured. Decision: approved.",
@@ -183,3 +183,35 @@ def test_output_guardrail_discipline(role: str, passing: str, tripping: str) -> 
     ok_trip, fb_trip = module.output_guardrail(_ctx(role, tripping))
     assert not ok_trip, f"{role}: an off-discipline output was NOT tripped"
     assert fb_trip.strip(), f"{role}: a tripped guardrail must carry feedback"
+
+
+# Regression pins for the specific false-negatives/false-positives the adversarial
+# review caught (each cleared the empty/TODO base, so it exercises the discipline
+# tripwire that was previously wrong). These must now behave correctly.
+_REGRESSION_TRIPS = [
+    ("ceo", "The CEO spent 20 minutes reviewing the options and will revisit them later."),
+    ("board-member", "The board met for 45 minutes and heard the arguments before wrapping up."),
+    ("chairman", "The Chairman spent 30 minutes hearing arguments and then adjourned the session."),
+    ("backend-em", "I read the diff. The handler returned an error in the null branch; the old code blocked on the DB."),
+    ("product-analyst", "Reviewed DAS-1500; engagement feels stronger this quarter, recommend more onboarding."),
+    ("finance-analyst", "Reviewed DAS-1500 from 2026; the budget looks fine and nothing needs escalation."),
+    ("support-lead", "The login issue is not yet resolved; still investigating with no workaround."),
+]
+_REGRESSION_PASSES = [
+    ("backend-eng-2", "Reproduced the failing test and fixed the broken handler; the suite now passes and CI is green."),
+    ("backend-em", "Reviewed the PR; the null-branch bug is fixed. Approved and merged."),
+]
+
+
+@pytest.mark.parametrize("role,output", _REGRESSION_TRIPS, ids=[r for r, _ in _REGRESSION_TRIPS])
+def test_review_false_negatives_now_trip(role: str, output: str) -> None:
+    module = runner.load_guardrail_module(role)
+    ok, fb = module.output_guardrail(_ctx(role, output))
+    assert not ok and fb.strip(), f"{role}: an off-discipline output should trip, got pass"
+
+
+@pytest.mark.parametrize("role,output", _REGRESSION_PASSES, ids=[f"{r}-{i}" for i, (r, _) in enumerate(_REGRESSION_PASSES)])
+def test_review_false_positives_now_pass(role: str, output: str) -> None:
+    module = runner.load_guardrail_module(role)
+    ok, fb = module.output_guardrail(_ctx(role, output))
+    assert ok, f"{role}: a legitimate green deliverable was wrongly tripped: {fb!r}"

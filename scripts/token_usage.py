@@ -93,10 +93,16 @@ def _coerce(value: Any, field: str) -> int:
 
 
 def _first(usage: Mapping[str, Any], keys: tuple[str, ...], field: str) -> int:
-    """Return the first present key's coerced value, or ``0`` if none present."""
+    """Return the first present, non-null key's coerced value, or ``0`` if none.
+
+    A present-but-``None`` value is treated as absent so a later same-group alias
+    (e.g. ``cached_input_tokens`` after a null ``cache_read_input_tokens``) is not
+    silently dropped to 0.
+    """
     for key in keys:
-        if key in usage:
-            return _coerce(usage[key], field)
+        value = usage.get(key)
+        if value is not None:
+            return _coerce(value, field)
     return 0
 
 

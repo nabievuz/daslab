@@ -48,6 +48,29 @@ def _utcnow_naive() -> dt.datetime:
     return dt.datetime.now(tz=dt.UTC).replace(tzinfo=None)
 
 
+def _normalize_ts(raw: object) -> str:
+    """Return a parse_iso-compatible 'YYYY-MM-DDTHH:MM:SSZ' from a tolerant ISO input.
+
+    memory_lib.parse_iso only accepts whole-second 'Z' or plain-date forms, but the
+    live ArcRift outbox writes MICROSECOND stamps (e.g. '2026-06-24T19:56:15.614434Z')
+    and offset forms. Without this normalization, parse_iso returns None and the
+    recency term silently collapses to 0 for exactly the format the real store uses.
+    Returns '' when the value cannot be parsed at all (recency then honestly 0).
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    if ml.parse_iso(s) is not None:
+        return s  # already an accepted whole-second / date form
+    try:
+        parsed = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(dt.UTC).replace(tzinfo=None)
+    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def load_config(path: str | Path) -> dict:
     p = Path(path)
     return (yaml.safe_load(p.read_text(encoding="utf-8")) or {}) if p.is_file() else {}
@@ -86,8 +109,10 @@ def normalize(record: dict, index: int, default_trust: float = DEFAULT_TRUST) ->
         "id": str(record.get("id") or f"outbox-{index}"),
         "content": str(content),
         "project": record.get("project", ""),
-        "created_at": record.get("created_at") or record.get("ts") or "",
-        "trust_score": float(record.get("trust_score", default_trust)),
+        "created_at": _normalize_ts(record.get("created_at") or record.get("ts") or ""),
+        "trust_score": float(
+            default_trust if record.get("trust_score") is None else record.get("trust_score")
+        ),
         "importance": record.get("importance"),  # None -> composite falls back to trust
         "status": record.get("status", ""),
         "mem_type": record.get("mem_type") or record.get("type") or "fact",
@@ -169,7 +194,12 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     raw = load_outbox(args.store)
     memories = [normalize(r, i, args.default_trust) for i, r in enumerate(raw)]
-    now = (ml.parse_iso(args.now) if args.now else None) or _utcnow_naive()
+    if args.now:
+        now = ml.parse_iso(_normalize_ts(args.now))
+        if now is None:
+            ap.error(f"--now is not a parseable ISO-8601 timestamp: {args.now!r}")
+    else:
+        now = _utcnow_naive()
 
     report = consolidate(memories, args.query, now, config, top_k=args.top_k)
     report["generated_at"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")

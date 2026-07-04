@@ -30,10 +30,15 @@ _TEST_EVIDENCE = re.compile(
     re.IGNORECASE,
 )
 
-# Self-reported failure the output must not carry.
+# A CURRENT failing/red state the output must not carry. Scoped to state-asserting
+# phrases rather than any occurrence of "failed"/"broken", so a green change that
+# merely narrates the bug it fixed ("fixed the failing test; CI green") is NOT rejected.
 _RED_BUILD = re.compile(
-    r"\b(failed|failing|red|broken|traceback|no tests)\b",
-    re.IGNORECASE,
+    r"(?i)\b("
+    r"ci (?:is )?red|build (?:is )?(?:failing|broken|red)|"
+    r"tests? (?:are |is )?(?:failing|red)|suite (?:is )?(?:red|failing)|"
+    r"still (?:failing|broken|red)|no tests"
+    r")\b",
 )
 
 
@@ -50,9 +55,9 @@ def output_guardrail(ctx: GuardrailContext) -> GuardrailResult:
     output = ctx.output or ""
     if _RED_BUILD.search(output):
         return trip(
-            "red build: the output self-reports a failing / broken state "
-            "(failed/failing/red/broken/traceback/no tests); fix it to green "
-            "before it can be accepted (LAW 5 — green CI = done)."
+            "red build: the output asserts a CURRENT failing/red state "
+            "(e.g. 'CI is red' / 'tests are failing' / 'no tests'); fix it to "
+            "green before it can be accepted (LAW 5 — green CI = done)."
         )
     if not _TEST_EVIDENCE.search(output):
         return trip(

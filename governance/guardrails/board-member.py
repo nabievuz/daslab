@@ -34,7 +34,7 @@ _DECISION_RECORDED = re.compile(
     r"ratif(?:y|ied|ies)|resolv(?:e|ed)|resolution|adopt(?:ed|s)?|endorse[ds]?|"
     r"second(?:ed)?|abstain(?:ed)?|vote[ds]?|"
     r"sign[- ]?off|signed[- ]?off|"
-    r"board[- ]?minute|minutes|ruling|ADR|approved[- ]?queue|"
+    r"board[- ]?minutes?|ruling|ADR|approved[- ]?queue|"
     r"TASDIQLANDI"
     r")\b",
     re.IGNORECASE,
