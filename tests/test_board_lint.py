@@ -585,6 +585,50 @@ def test_produces_ok_even_if_dir_missing_and_field_absent(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
+# R13 — FINALE program tickets require typed contracts (fail-closed for
+# `program: finale`; every other ticket is unaffected). DAS FINALE / R3.
+# ---------------------------------------------------------------------------
+
+
+def test_finale_missing_both_contracts_fires(tmp_path: Path) -> None:
+    d = _make_schemas_dir(tmp_path, "task-ledger", "typed-contracts")
+    fm = make_ticket(program="finale")  # FINALE marker, no produces/consumes
+    errors = _r11_errors(fm, d)
+    assert any("program: finale requires a non-empty 'produces:'" in e for e in errors)
+    assert any("program: finale requires a non-empty 'consumes:'" in e for e in errors)
+
+
+def test_finale_with_both_contracts_ok(tmp_path: Path) -> None:
+    d = _make_schemas_dir(tmp_path, "task-ledger", "typed-contracts")
+    fm = make_ticket(program="finale", produces="task-ledger", consumes="typed-contracts")
+    assert _r11_errors(fm, d) == []
+
+
+def test_finale_missing_consumes_only_fires(tmp_path: Path) -> None:
+    d = _make_schemas_dir(tmp_path, "task-ledger")
+    fm = make_ticket(program="finale", produces="task-ledger")  # consumes absent
+    errors = _r11_errors(fm, d)
+    assert any("program: finale requires a non-empty 'consumes:'" in e for e in errors)
+    assert not any("'produces:'" in e for e in errors)  # produces is satisfied
+
+
+def test_finale_marker_is_case_insensitive(tmp_path: Path) -> None:
+    d = _make_schemas_dir(tmp_path, "task-ledger")
+    fm = make_ticket(program="FINALE")  # upper-case marker still fires the gate
+    errors = _r11_errors(fm, d)
+    assert any("program: finale requires" in e for e in errors)
+
+
+def test_non_finale_missing_contracts_is_noop(tmp_path: Path) -> None:
+    # Regression guard: a non-FINALE ticket (or one with a different program
+    # value) missing produces/consumes lints exactly as before — the current
+    # green board must stay green.
+    d = _make_schemas_dir(tmp_path, "task-ledger")
+    assert _r11_errors(make_ticket(), d) == []
+    assert _r11_errors(make_ticket(program="qaqnuz"), d) == []
+
+
+# ---------------------------------------------------------------------------
 # Tolerant reader — _schema_names_of
 # ---------------------------------------------------------------------------
 

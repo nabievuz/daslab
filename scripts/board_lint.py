@@ -418,6 +418,26 @@ def lint_tickets(
                 except SchemaError as exc:
                     err(f"{contract_key} artifact schema '{name}' is malformed: {exc}")
 
+        # R13 — FINALE program tickets require typed contracts (FAIL-CLOSED).
+        # A ticket that declares `program: finale` MUST carry BOTH `produces:`
+        # and `consumes:` (R11 above still validates that each named schema is
+        # well-formed). This is the one place the typed-contract discipline is
+        # fail-closed rather than optional, and it fires ONLY for the FINALE
+        # program marker — so every non-FINALE ticket lints exactly as before.
+        # The marker is matched case-insensitively on a bare token to dodge the
+        # permissive-frontmatter colon/bracket parse gotcha.
+        if fm.get("program", "").strip().lower() == "finale":
+            for contract_key in ("produces", "consumes"):
+                names = (
+                    _schema_names_of(fm, contract_key) if contract_key in fm else []
+                )
+                if not names:
+                    err(
+                        f"program: finale requires a non-empty '{contract_key}:' "
+                        "typed contract naming a governance/schemas/<name>.yaml "
+                        "(fail-closed for FINALE tickets); it is absent or empty"
+                    )
+
     # R12 — stage-gated delivery (P22 / DAS-1494). Cross-ticket, additive:
     # a stage-N ticket must not ADVANCE past an open GATE-(N-1), and a
     # production-deploy must not proceed while GATE-5 is open (reusing the
